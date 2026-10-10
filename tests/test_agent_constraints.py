@@ -37,8 +37,42 @@ def test_actual_value_prompt_never_grants_report_permission(chat, monkeypatch):
     model(monkeypatch,[{'action':'tool','tool':'build_investment_memo','arguments':{'question':before['request']['question']}}, {'action':'respond','message':'根据已有材料作答；未联网或修改报告。'}])
     agent.execute(chat['id'])
     saved = store.get_conversation(chat['id'])
-    assert saved['state'] == 'idle' and saved['steps'][0]['state'] == 'failed'
+    assert saved['state'] == 'idle' and saved['steps'] == []
     assert store.get_run(chat['run_id']) == before
+
+
+def test_rejected_tool_then_model_failure_returns_bounded_existing_facts(chat, monkeypatch):
+    store.update_run(chat['run_id'],lambda r:r['facts'].append(
+        {'year':2025,'label':'营业收入','value':'123','status':'api_only'}))
+    current=begin(chat,'只用已有材料回答，不联网、不改报告，不算估值。')
+    calls=[]
+    def decide(*args,**kwargs):
+        calls.append(1)
+        if len(calls)==1:
+            return {'action':'tool','tool':'build_investment_memo','arguments':{}},{'model':'stub'}
+        raise agent.ProviderError('模型调用超时')
+    monkeypatch.setattr(agent,'model_json',decide)
+    agent.execute(current['id'])
+    saved=store.get_conversation(current['id'])
+    assert len(calls)==2 and saved['state']=='idle' and saved['steps']==[]
+    assert saved['messages'][-1]['incomplete']
+    assert '123 元' in saved['messages'][-1]['content']
+    assert '不足以证明经营原因' in saved['messages'][-1]['content']
+    assert store.get_run(chat['run_id'])['memo']['title']=='保留报告'
+
+
+@pytest.mark.parametrize('phrase',['不使用任何工具','不使用工具','不用任何工具','不要调用工具'])
+def test_explicit_no_tools_prevents_any_dispatch(chat, monkeypatch, phrase):
+    current=begin(chat,'不使用任何工具，仅解释已有资料的局限。')
+    assert constraints(phrase)['no_tools']
+    assert agent.requested_artifacts('不使用任何工具，请生成报告。')==set()
+    model(monkeypatch,[{'action':'tool','tool':'read_document','arguments':{'page':1}},
+                       {'action':'respond','message':'仅根据现有信息，尚无充分依据。'}])
+    agent.execute(current['id'])
+    saved=store.get_conversation(current['id'])
+    assert saved['state']=='idle' and saved['steps']==[]
+    with pytest.raises(ValueError,match='不使用工具'):
+        agent.tool(current,'read_document',{'page':1})
 
 
 @pytest.mark.parametrize('text', [

@@ -9,7 +9,7 @@ from . import store,securities,valuation,research,documents,disclosures,deep_res
 from .config import DATA
 from .schemas import RunRequest
 from .providers import model_json,ProviderError
-from .turn_constraints import constraints, enforce, latest_user, coverage, canonical_url
+from .turn_constraints import constraints, enforce, latest_user, coverage, canonical_url, prohibited_reason
 from .report_state import report_valuation_status
 
 SYSTEM="""你是研序，一位与用户合作的A股投研助手。使用中文。主动讨论研究思路、方法适用性、反证和还需取得的资料。
@@ -119,6 +119,7 @@ def requested_artifacts(text):
         if valuation_intent and calculation and not re.search(r"不要|暂不|先不|不必|无需|别|不(?:再|直接|自动|擅自)?\s*$",clause[max(0,calculation.start()-8):calculation.start()]):
             required.add("valuation")
     limits=constraints(text)
+    if limits['no_tools']: return set()
     if limits['no_report']: required.discard('report')
     if limits['no_calculation'] or limits['no_valuation']: required.discard('valuation')
     if limits['no_valuation']: required.discard('proposal')
@@ -329,8 +330,9 @@ def memo_tool_for_request(name,chat,results):
 
 
 def execute(cid):
-    start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];results=[];unit_retries=0
+    start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];results=[];unit_retries=0;denied=0
     user_text=latest_user(chat)
+    rules=constraints(user_text)
     saved_sources=(store.get_run(chat['run_id']) if chat.get('run_id') else chat).get('research_sources',[])
     required=requested_artifacts(chat["messages"][-1]["content"])
     if "document" in required and documents.attached_documents(chat) and not re.search(r"查找|找到|下载|获取|找",chat["messages"][-1]["content"]):
@@ -342,11 +344,14 @@ def execute(cid):
             chat=store.get_conversation(cid)
             feedback_note=results[-1].get('validation_feedback','') if results else ''
             budget_note="\n本轮已到最后一次决策，只能 respond：总结已经取得的材料、原文页码与未核实项，不再调用工具。" if decision_index==7 else ""
-            decision,meta=model_json(SYSTEM+'\n'+feedback_note+budget_note,{"today":date.today().isoformat(),"context":context(chat),"decisions_remaining":8-decision_index,
+            policy_note="\n本轮用户禁止使用任何工具，只能 respond。" if rules['no_tools'] else (
+                "\n本轮禁止的联网、报告或估值动作不得提出；只用许可的已有材料答复，无法核实时说明缺口。" if
+                any(rules[k] for k in ('no_network','no_report','no_calculation','no_valuation')) else "")
+            decision,meta=model_json(SYSTEM+policy_note+'\n'+feedback_note+budget_note,{"today":date.today().isoformat(),"context":context(chat),"decisions_remaining":8-decision_index,
                 "valuation_methods":valuation.CATALOG,
                 "proposed_scenarios":chat.get("proposals",[])[-4:],
                 "conversation":[{"role":m["role"],"content":m["content"]} for m in chat["messages"][-24:]],
-                "tool_results":results,"data_source":chat["data_source"],"user_constraints":constraints(latest_user(chat)),
+                "tool_results":results,"data_source":chat["data_source"],"user_constraints":rules,
                 "free_research_sources":[{**s,'text':s.get('text','')[:1800]} for s in chat.get('research_sources',[])[-12:]],
                 "product_capabilities":{"pdf_upload":"聊天输入区的上传 PDF，上传成功即接入当前对话；100 MB / 800 页",
                     "library":"接入资料可选择资料库已有 PDF","annual_reports":"查找年报或 fetch_annual_report 使用巨潮公开披露，无需 Tushare Token",
@@ -411,6 +416,11 @@ def execute(cid):
             if decision.get("action")!="tool" or not isinstance(decision.get("arguments",{}),dict):
                 results.append({"error":"输出必须为 respond 或 tool；请遵循 JSON 结构"});continue
             name=memo_tool_for_request(str(decision.get("tool","")),chat,results);args=decision.get("arguments",{})
+            reason=prohibited_reason(rules,name)
+            if reason:
+                denied+=1
+                results.append({"validation_feedback":reason+"请直接回答已掌握的事实并说明尚未核实的部分，不要再次提出被禁止的工具。"})
+                continue
             if name=='build_investment_memo' and sum(r.get('tool')==name and bool(r.get('result',{}).get('error')) for r in results)>=2:
                 raise ProviderError('深度报告经过修订仍未通过校验，已停止重复生成。旧报告和已取得来源均保留；可调整研究范围后再试。')
             sid=uuid.uuid4().hex[:12]
@@ -432,11 +442,32 @@ def execute(cid):
         raise ProviderError("本轮已达到 8 次模型决策上限，已完成的结果已保存；可继续提出下一步要求")
     except research.Cancelled:
         finish_error(cid,turn_id,"已停止本轮执行。已经完成的工具结果仍然保留。","cancelled")
-    except ProviderError as error: finish_error(cid,turn_id,str(error),"failed")
+    except ProviderError as error:
+        if denied:
+            finish_restricted(cid,turn_id,str(error),saved_sources)
+        else:
+            finish_error(cid,turn_id,str(error),"failed")
     except Exception:
         import traceback
         traceback.print_exc()
         finish_error(cid,turn_id,"本轮遇到执行异常，已保留之前完成的结果。请检查连接或重试。","failed")
+
+def finish_restricted(cid,turn_id,error,saved_sources):
+    chat=store.get_conversation(cid)
+    run=store.get_run(chat['run_id']) if chat.get('run_id') else None
+    facts=[f for f in (run or {}).get('facts',[]) if f.get('year')==(run or {}).get('request',{}).get('year')
+           and f.get('value') is not None and f.get('status')!='conflict'][:3]
+    lines=[f"- {f['year']} 年{f['label']}：{f['value']} 元（来源状态：{f['status']}）" for f in facts]
+    message="本轮没有执行被禁止的工具。模型未能完成解释性答复："+error+"\n\n"
+    message+=("当前已有的结构化事实仅包括：\n"+"\n".join(lines) if lines else "当前没有可直接列出的无冲突结构化财务事实。")
+    message+="\n\n这些数字不足以证明经营原因或完成原问题；已有资料和报告均未因此修改。"
+    observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],latest_user(chat),saved_sources,message)
+    def finish(c):
+        c['state']='idle'
+        c.setdefault('turn_coverage',{})[turn_id]=observed
+        c['messages'].append({"id":uuid.uuid4().hex[:12],"role":"assistant","content":message,"time":store.now(),
+            "turn_id":turn_id,"coverage":observed,"incomplete":True})
+    store.update_conversation(cid,finish)
 
 def finish_error(cid,turn_id,message,state):
     def change(c):

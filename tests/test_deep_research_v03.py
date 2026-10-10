@@ -48,6 +48,26 @@ def test_unobserved_and_future_citations_rejected(run):
     r['research_sources'][0]['published_at']=None
     assert deep.validate_memo(candidate(),r)['sources'][0]['published_at'] is None
 
+@pytest.mark.parametrize('read_status,text',[
+    ('search_snippet','搜索摘要'),('pdf_link_only','PDF 链接'),('failed',''),('body_read','')
+])
+def test_unread_sources_cannot_support_report_claims(run,read_status,text):
+    r=source_run(run)
+    r['research_sources'][0].update(read_status=read_status,text=text)
+    with pytest.raises(ValueError,match='搜索摘要|未读正文'):
+        deep.validate_memo(candidate(),r)
+
+
+def test_ocr_can_support_inference_but_not_verified_claim(run):
+    r=source_run(run)
+    r['research_sources'][0].update(kind='pdf',read_status='windows_ocr')
+    assert deep.validate_memo(candidate(),r)['theses'][0]['status']=='inference'
+    draft=candidate()
+    draft['theses'][0]['status']='supported'
+    with pytest.raises(ValueError,match='扫描识别'):
+        deep.validate_memo(draft,r)
+
+
 def test_html_in_model_is_escaped_in_export(run):
     r=source_run(run);draft=candidate();draft['sections'][0]['body']='<script>alert(1)</script>'
     r['memo']=deep.validate_memo(draft,r)

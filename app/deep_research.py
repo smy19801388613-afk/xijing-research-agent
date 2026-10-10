@@ -106,6 +106,17 @@ def reference_catalog(run):
     return refs
 
 
+def citable_source(ref, status):
+    if ref["kind"] not in ("pdf", "web"):
+        return True
+    read_status=ref.get("read_status")
+    if not ref.get("text", "").strip() or read_status not in (
+        "body_read", "article_text", "pdf_text", "public_pdf_text", "windows_ocr"
+    ):
+        return False
+    return read_status != "windows_ocr" or status != "supported"
+
+
 def validate_memo(candidate, run):
     if not isinstance(candidate, dict):
         raise ValueError("报告必须是结构化对象")
@@ -122,6 +133,8 @@ def validate_memo(candidate, run):
         if not isinstance(ids, list) or any(not isinstance(i, str) or i not in refs for i in ids):
             invalid=[str(i)[:100] for i in ids if not isinstance(i,str) or i not in refs] if isinstance(ids,list) else ['evidence_ids 不是列表']
             raise ValueError("存在未取得或晚于截止日的引用："+'、'.join(invalid[:8])+"。请按原文匹配并复制 allowed_reference_ids 中的完整ID，不得添加或改写ID前缀")
+        if item.get("status") != "gap" and any(not citable_source(refs[i], item.get("status")) for i in ids):
+            raise ValueError("论点引用只有搜索摘要、未读正文或未核对的扫描识别；请先读取原文，无法核实时标为 gap")
         if not ids and item.get("status") != "gap":
             raise ValueError("判断需要来源；无依据的部分请明确标记 status=gap")
         return list(dict.fromkeys(ids))
@@ -382,7 +395,7 @@ def build(run_id, question, chat=None, progress=None):
     context = {"company": company, "ticker": ticker, "financial_year": req["year"], "as_of": cutoff,
         "question": question, "focus": plan.get("focus"), "facts": run["facts"], "calculations": run["calculations"],
         "valuations": run.get("valuation_history", [])[-4:], "sources": source_context,"available_materials":material_inventory(refs),
-        "allowed_reference_ids": [s['id'] for s in source_context], "search_gaps": follow.get("gaps", []), "search_limitations": list(dict.fromkeys(limitations)),
+        "allowed_reference_ids": [s['id'] for s in source_context if citable_source(s, "inference")], "search_gaps": follow.get("gaps", []), "search_limitations": list(dict.fromkeys(limitations)),
         "conversation": [{"role": m["role"], "content": m["content"][:4500]} for m in chat.get("messages", [])[-12:]]}
     update("撰写业务、经营质量与估值分歧分析")
     draft = call(MEMO_SYSTEM, context, 7800, reasoning=True)
@@ -409,7 +422,7 @@ def build(run_id, question, chat=None, progress=None):
         context['valuations'] = run.get('valuation_history', [])[-4:]
         context['sources']=bounded_sources(refs)
         context['available_materials']=material_inventory(refs)
-        context['allowed_reference_ids']=[s['id'] for s in context['sources']]
+        context['allowed_reference_ids']=[s['id'] for s in context['sources'] if citable_source(s, "inference")]
         context['search_limitations']=list(dict.fromkeys(limitations))
         update("按反方意见修订并检查来源引用")
         draft = call(MEMO_SYSTEM + "\n修订草稿，必须处理所有审阅问题并保留同一JSON结构。", {"context": context,
@@ -447,7 +460,7 @@ def refine(run_id, question, chat, progress=None):
     if progress: progress('根据已查阅的官方原文修订研究判断')
     payload={'company':run['company'],'ticker':run['request']['ticker'],'as_of':run['request']['as_of'],
         'financial_year':run['request']['year'],'question':question,'sources':sources,'available_materials':material_inventory(refs),
-        'allowed_reference_ids':[s['id'] for s in sources],'facts':run['facts'],'calculations':run['calculations'],
+        'allowed_reference_ids':[s['id'] for s in sources if citable_source(s, "inference")],'facts':run['facts'],'calculations':run['calculations'],
         'valuations':run.get('valuation_history',[])[-4:],
         'previous_report':{k:v for k,v in (run.get('memo') or {}).items() if k in ('title','summary','theses','sections')},
         'prior_review_issues':(run.get('memo') or {}).get('review',{}).get('issues',[])}
