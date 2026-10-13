@@ -10,7 +10,12 @@ $expectedVersion = $versionMatch.Groups[1].Value
 $indexPath = Join-Path $projectRoot 'web\dist\index.html'
 function Get-ResearchServer {
     try {
-        $health = Invoke-RestMethod "$serviceUrl/api/health" -TimeoutSec 2
+        # Windows PowerShell 5 decodes charset-less JSON as ANSI. Decode the raw
+        # UTF-8 response so Chinese workspace paths compare correctly on 5 and 7.
+        $response = Invoke-WebRequest "$serviceUrl/api/health" -UseBasicParsing -TimeoutSec 2
+        $reader = New-Object System.IO.StreamReader($response.RawContentStream, [System.Text.Encoding]::UTF8)
+        try { $health = $reader.ReadToEnd() | ConvertFrom-Json }
+        finally { $reader.Dispose() }
         if ($health.service -eq 'Research Desk') { return $health }
     } catch {}
     return $null
