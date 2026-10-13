@@ -36,7 +36,9 @@ def test_launcher_reports_live_version_and_rejects_old_server(tmp_path, running_
     script = project / 'scripts' / 'start.ps1'
     shutil.copyfile(ROOT / 'scripts' / 'start.ps1', script)
     # Fake only the health probe. A running-version check must neither spawn nor stop a process.
-    command = ("function Invoke-RestMethod { [pscustomobject]@{service='Research Desk';version='" + running_version + "'} }; "
+    data_dir=str(project/'var').replace("'", "''")
+    command = ("$env:RESEARCH_COMPETITION_MODE='0'; Remove-Item Env:RESEARCH_DATA_DIR -ErrorAction SilentlyContinue; "
+               "function Invoke-RestMethod { [pscustomobject]@{service='Research Desk';competition=$false;data_directory='"+data_dir+"';version='" + running_version + "'} }; "
                "function Start-Process { throw 'unexpected process launch' }; "
                "function Stop-Process { throw 'unexpected process stop' }; "
                "& '" + str(script).replace("'", "''") + "' -NoBrowser")

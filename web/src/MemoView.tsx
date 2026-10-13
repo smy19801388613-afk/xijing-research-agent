@@ -1,13 +1,14 @@
 import {useId,useState} from 'react';
 import {ChevronDown,ChevronRight,ExternalLink} from 'lucide-react';
 import ResearchText from './ResearchText';
+import ReportSyncNotice from './ReportSyncNotice';
 
 function EvidenceLinks({ids,memo}:any){
   const sources=(ids||[]).map((id:string)=>memo.sources?.find((s:any)=>s.id===id)).filter(Boolean);
   if(!sources.length)return null;
   return <div className="memo-citations">{sources.map((s:any)=>s.url?<a href={s.url} key={s.id} target="_blank" rel="noreferrer">{s.title}<ExternalLink size={11}/></a>:<span key={s.id}>{s.title}{s.kind==='valuation'?' · 假设情景':s.verification?' · '+s.verification.label:s.status==='api_only'?' · 接口单源':''}</span>)}</div>
 }
-export default function MemoView({run,onDeepResearch,onDiscuss}:any){
+export default function MemoView({run,onDeepResearch,onDiscuss,onSync,onHistory}:any){
   const memo=run?.memo;
   const [sourcesOpen,setSourcesOpen]=useState(false);
   const anchor=useId().replace(/:/g,'');
@@ -16,6 +17,7 @@ export default function MemoView({run,onDeepResearch,onDiscuss}:any){
   const valuationState=run.report_valuation_status;
   return <div className="investment-memo">
     <header className="memo-heading"><div><span className="memo-kicker">{deep?'投资研究备忘录':'财务研究简报'} · 第 {run.report_revision||1} 版</span><h2>{memo.title}</h2></div>{onDeepResearch&&<button className="secondary" onClick={onDeepResearch}>深入研究并更新</button>}</header>
+    <ReportSyncNotice run={run} onSync={onSync} onHistory={onHistory}/>
     {memo.stance&&<div className="memo-stance"><strong>研究立场</strong><p>{memo.stance}</p></div>}
     <ResearchText text={memo.summary}/>
     {valuationState&&['changed','unlinked'].includes(valuationState.state)&&<div className="memo-valuation-status" role="note"><strong>估值与报告的关联</strong><p>{valuationState.message}</p></div>}

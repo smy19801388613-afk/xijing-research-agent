@@ -30,13 +30,21 @@ def test_block_before_dns_and_network(controlled,monkeypatch):
     with pytest.raises(comp.PolicyError):web_research._fetch('https://blocked.example/')
 
 
-def test_file_and_symlink_escape(controlled,tmp_path):
+def test_file_escape(controlled,tmp_path):
     outside=tmp_path.parent/'competition-outside.txt';outside.write_text('private')
-    linked=tmp_path/'link.txt';linked.symlink_to(outside)
-    for path in (outside,linked,tmp_path/'connections.json'):
+    for path in (outside,tmp_path/'connections.json'):
         with pytest.raises(comp.PolicyError):comp.read_bytes(path)
     inside=tmp_path/'data.txt';inside.write_text('material')
     assert comp.read_bytes(inside)==b'material'
+
+def test_symlink_escape(controlled,tmp_path):
+    outside=tmp_path.parent/'competition-outside-link.txt';outside.write_text('private')
+    linked=tmp_path/'link.txt'
+    try: linked.symlink_to(outside)
+    except OSError as exc:
+        if getattr(exc,'winerror',None)==1314: pytest.skip('Windows账户无创建符号链接权限；普通路径边界另行测试')
+        raise
+    with pytest.raises(comp.PolicyError): comp.read_bytes(linked)
 
 
 def test_policy_requires_workspace_and_freezes_separately(controlled,monkeypatch):

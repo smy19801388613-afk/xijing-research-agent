@@ -60,6 +60,7 @@ class ConversationRequest(BaseModel):
 class TurnRequest(BaseModel):
     message: str = Field(min_length=1,max_length=8000)
     profile_id: str | None = None
+    resume_from_turn_id: str | None = Field(default=None,max_length=80)
 
 class ReportRequest(BaseModel):
     ticker: str = Field(pattern=r"^\d{6}\.(SZ|SH|BJ)$")

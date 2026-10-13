@@ -125,9 +125,15 @@ def create(request:RunRequest):
     if payload["data_source"]=="default": payload["data_source"]=config["data_source"]
     if competition.POLICY["enabled"] and payload["mode"]=="live": payload["data_source"]="documents"
     payload["model_profile"]=payload["model_profile"] or config["active_model"]
-    connections.resolve_model(payload["model_profile"])
+    if payload['use_model']: connections.resolve_model(payload["model_profile"])
     for identity in payload["material_ids"]: competition.read_material(identity)
-    return launch(store.create_run(payload))
+    preflight=None
+    if competition.POLICY['enabled'] and payload['mode']=='live':
+        preflight=competition.preflight(payload)
+        if not preflight['ready']: raise ValueError('；'.join(preflight['errors']))
+    run=store.create_run(payload)
+    if preflight: run=store.update_run(run['id'],lambda r:r.update(material_preflight=preflight))
+    return launch(run)
 
 @app.get("/api/runs/{run_id}/valuation-options")
 def valuation_options(run_id:str): return valuation.options(store.get_run(run_id))
@@ -170,7 +176,7 @@ def conversation_turn(cid:str,request:TurnRequest):
     if not profile["model"] or (not profile["key"] and profile["provider"]!="ollama"):
         raise ValueError("请在连接设置中配置当前模型")
     config=connections.load()
-    chat=store.begin_turn(cid,request.message.strip(),profile["id"],config["data_source"])
+    chat=store.begin_turn(cid,request.message.strip(),profile["id"],config["data_source"],resume_from_turn_id=request.resume_from_turn_id)
     folder=DATA/"conversations"/cid;folder.mkdir(parents=True,exist_ok=True)
     try:
         with (folder/"worker.log").open("ab") as log:
@@ -211,8 +217,8 @@ def get(run_id:str):
     from .report_state import report_valuation_status
     run=store.get_run(run_id)
     from .fact_state import enrich
-    from .questions import snapshot
-    return enrich(run) | {"report_valuation_status":report_valuation_status(run),"question_coverage":snapshot(run)}
+    from .questions import snapshot,report_sync
+    return enrich(run) | {"report_valuation_status":report_valuation_status(run),"question_coverage":snapshot(run),"report_sync":report_sync(run)}
 
 @app.post("/api/runs/{run_id}/retry",status_code=202)
 def retry(run_id:str):
@@ -348,17 +354,31 @@ def research_question_sources(run_id:str):
 @app.post("/api/runs/{run_id}/questions")
 def research_questions_plan(run_id:str,request:dict):
     from .questions import plan
-    if store.get_run(run_id)['state'] in ('queued','running'): raise ValueError('请等待当前任务完成')
+    ensure_questions_editable(run_id)
     return plan(run_id,request.get('questions',[]))
+
+def ensure_questions_editable(run_id):
+    if store.get_run(run_id)['state'] in ('queued','running') or any(c['state']=='running' for c in store.conversations(run_id)):
+        raise ValueError('请等待当前研究或对话完成后编辑问题')
+
+@app.patch("/api/runs/{run_id}/questions/{question_id}")
+def research_question_edit(run_id:str,question_id:str,request:dict):
+    from .questions import edit
+    ensure_questions_editable(run_id)
+    return edit(run_id,question_id,request,'human')
 
 @app.post("/api/runs/{run_id}/question-answers")
 def research_questions_update(run_id:str,request:dict):
     from .questions import update
-    if store.get_run(run_id)['state'] in ('queued','running'): raise ValueError('请等待当前任务完成')
+    ensure_questions_editable(run_id)
     return update(run_id,request.get('answers',[]),'human')
 
 @app.get("/api/competition")
 def competition_status(): return competition.status()
+
+@app.post("/api/competition/preflight")
+def competition_preflight(request:RunRequest):
+    return competition.preflight(request.model_dump(mode='json'))
 
 @app.get("/api/competition/materials")
 def competition_materials(): return competition.materials()

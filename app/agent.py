@@ -1,6 +1,7 @@
 from . import competition
 """A bounded tool-using agent. Public steps are actions, never hidden reasoning."""
 import json
+import hashlib
 import re
 import time
 import uuid
@@ -10,7 +11,9 @@ from . import store,securities,valuation,research,documents,disclosures,deep_res
 from .config import DATA
 from .schemas import RunRequest
 from .providers import model_json,ProviderError
-from .turn_constraints import constraints, enforce, latest_user, coverage, canonical_url, prohibited_reason
+from .turn_constraints import constraints, enforce, latest_user, coverage, canonical_url, prohibited_reason, effective_rules, task_request, task_steps
+from .tool_capabilities import TOOLS, LABELS
+from .evidence_policy import source_fingerprint
 from .report_state import report_valuation_status
 from .fact_state import claims, enrich
 from . import questions
@@ -51,6 +54,9 @@ PE、PS 的历史基数由程序从已核验事实读取，不能替换。DCF �
 报告每个论点要有引用、反证、失效条件；估值假设与历史事实保持区分。
 工具失败可修正重试一次或解释缺口。若结果已完成，简要总结实际变化并停止，不重复调用。
 研究完成度以question_coverage为准：支持状态必须有实际原文摘录及日期，搜索摘要/来源数量不能算问题回答完成。每项证据需说明如何回答该问题，支持关系仍需研究员复核。
+完整公司研究先复用已有research_questions、未回答问题和next_action；必要时建立3–5个关键问题。用户只问一个问题时不强制扩展；禁止修改问题记录时只讨论，不调用问题写入工具。
+user_constraints是本轮实际约束，优先于旧对话；available_tools只列本轮可用工具。original_request是续查原任务，不要把“继续未完成部分”当成全新研究或重新请求保存授权。
+续查的tool_results已包含成功结果，应直接复用。报告输入不变时不重复保存；新原文或问题答案改变报告依据时，可在原保存授权内更新一次，但本轮明确禁止改报告仍须遵守。不重复取数。若用户明确要求保存或更新，直接执行并说明实际版本，不要重复确认。
 可用工具：
 plan_research_questions: {questions:[{question:具体问题,completion_criteria:所需证据}]}。建立细分问题，不覆盖旧问题；把产品存在、收费合同、分项收入、回款拆开。
 update_research_question: {question_id:已存在问题ID,answer:答案,status:pending|partial|supported|conflict|unverifiable,bindings:[{source_id:实际来源ID,quote:原文连续摘录,relation:support|counter,reason:与问题的具体关系}],counter_evidence:反方说明,gaps:[缺口],next_action:下一步}。保存问题级证据，摘录必须匹配已读来源；不能将摘要数量当完成度。
@@ -76,9 +82,9 @@ refine_investment_memo: {question:需改写/纠正的具体内容}。使用已�
 工具失败时按具体反馈修正一次。尚未保存则明确未保存，不得以“请稍等，我将再保存”结束并假装后台继续。若保存成功，即给报告位置与导出方式并停止。
 """
 
-def context(chat):
+def context(chat,run=None):
     if not chat.get("run_id"): return None
-    run=enrich(store.get_run(chat["run_id"]))
+    run=enrich(run if run is not None else store.get_run(chat["run_id"]))
     memo=run.get('memo')
     if isinstance(memo,dict): memo={k:v for k,v in memo.items() if k not in ('sources','coverage','review')}
     return {k:run.get(k) for k in ("id","company","request","state","facts","calculations","gaps","report_revision")}|{"memo":memo,
@@ -175,7 +181,7 @@ def document_unit_feedback(message,results):
 
 def grounded_assumptions(chat,method,assumptions,quotes):
     texts=[m["content"] for m in chat["messages"] if m["role"]=="user"]
-    latest=texts[-1] if texts else ""
+    latest=task_request(chat)
     aliases={"growth_pct":["增长率","增长","增速"],"shares_100m":["摊薄后总股本","总股本","股本","总股数"],
         "base_fcff_100m":["基期FCFF","基期 FCFF","FCFF"],"book_equity_100m":["归母净资产"],
         "ebitda_100m":["EBITDA"],"equity_bridge_100m":["桥接扣减项","桥接调整项","桥接"],
@@ -212,7 +218,7 @@ def grounded_assumptions(chat,method,assumptions,quotes):
         raise ValueError("参数 "+key+" 缺少可核对的依据。若用户已明确给出，请原样引用其消息并重试一次，不要要求重复确认；否则先讨论数值。")
 
 @competition.traced("tool")
-def tool(chat,name,args):
+def tool(chat,name,args,model_input_run=None):
     competition.audit("tool_arguments",tool=name,arguments=args,conversation_id=chat.get("id"),run_id=chat.get("run_id"))
     # Reload the human turn; neither stale context nor model arguments grant permission.
     if chat.get('id'): chat=store.get_conversation(chat['id'])
@@ -276,7 +282,7 @@ def tool(chat,name,args):
                     active.setdefault("progress",[]).append({"time":store.now(),"label":label})
             store.update_conversation(chat["id"],change)
         execute_memo=deep_research.refine if name=='refine_investment_memo' else deep_research.build
-        result=execute_memo(run["id"],latest_user(chat) or str(args.get("question",'')),chat,progress)
+        result=execute_memo(run["id"],task_request(chat) or str(args.get("question",'')),chat,progress)
         if name=='build_investment_memo':
             before={s['id']:s for s in run.get('research_sources',[]) if s.get('id')}
             observed=[s for s in store.get_run(run['id']).get('research_sources',[]) if s.get('id') and s!=before.get(s['id'])]
@@ -293,7 +299,7 @@ def tool(chat,name,args):
         store.update_conversation(chat["id"],lambda c:c.setdefault("proposals",[]).append(proposal))
         return {"artifact":"proposal","proposal":proposal,"note":"待用户采用；尚未保存估值结果"}
     if name=="calculate_proposal":
-        latest=next((m["content"] for m in reversed(chat["messages"]) if m["role"]=="user"),"")
+        latest=task_request(chat)
         proposal=next((p for p in chat.get("proposals",[]) if p["id"]==args.get("proposal_id") and p["run_id"]==run["id"]),None)
         if not proposal: raise ValueError("未找到当前研究的已展示方案")
         if re.search(r"(?:不|暂不|先不)(?:采用|确认|同意|计算|执行)|不要.{0,6}(?:采用|计算|执行)",latest) or not re.search(r"采用|确认|同意|按.{0,12}(?:方案|执行)|照.{0,12}方案",latest):
@@ -322,38 +328,159 @@ def tool(chat,name,args):
     if name=="revise_report":
         if run["state"] in ("queued","running"): raise ValueError("财务研究尚未完成")
         candidate=args.get("memo",{})
-        memo=deep_research.validate_memo(candidate,run) if candidate.get("schema_version")==2 else research.valid_memo(candidate,run)
+        skipped_answers=bool(isinstance(candidate,dict) and candidate.get('question_answers') and effective_rules(chat).get('no_question_writes'))
+        if skipped_answers: candidate={**candidate,'question_answers':[]}
+        # The model may have waited while another conversation updated this run.
+        # Freeze validation to the actual input it saw, then compare inside the write.
+        input_run=model_input_run if model_input_run and model_input_run.get('id')==run['id'] else run
+        memo=deep_research.validate_memo(candidate,input_run) if candidate.get("schema_version")==2 else research.valid_memo(candidate,input_run)
+        memo.setdefault('_question_input_snapshot',questions._question_snapshot(input_run,memo))
         note=str(args.get("change_note","根据研究对话更新"))[:500]
         def change(current):
             if current["state"] in ("queued","running"): raise ValueError("研究仍在执行")
+            questions.assert_report_input(current,memo)
+            if memo.get('question_answers'):
+                questions.apply(current,questions.validate_updates(current,memo['question_answers']))
+            saved_memo=questions.freeze_report(current,memo)
+            saved_memo.pop('_question_input_snapshot',None)
             revision=current.get("report_revision",1)
             current.setdefault("memo_revisions",[]).append({"revision":revision,"memo":current.get("memo"),
                 "replaced_at":store.now(),"change_note":note,"conversation_id":chat["id"]})
-            current["memo"]=memo;current["report_revision"]=revision+1;current["memo_updated_at"]=store.now()
+            current["memo"]=saved_memo;current["report_revision"]=revision+1;current["memo_updated_at"]=store.now()
             current["events"].append({"time":store.now(),"label":"对话修订报告","detail":note,"kind":"info"})
         updated=store.update_run(run["id"],change)
-        return {"artifact":"report","run_id":run["id"],"revision":updated["report_revision"],"summary":memo["summary"],"change_note":note}
+        result={"artifact":"report","run_id":run["id"],"revision":updated["report_revision"],"summary":memo["summary"],"change_note":note}
+        if skipped_answers: result['note']='按本轮要求仅更新报告，研究问题记录保持不变。'
+        return result
     raise ValueError("未知工具，请使用工具列表中的名称")
 
 def memo_tool_for_request(name,chat,results):
     if name!='build_investment_memo' or not chat.get('run_id'): return name
     run=store.get_run(chat['run_id'])
     if not run.get('research_sources'): return name
-    latest=next((m['content'] for m in reversed(chat['messages']) if m['role']=='user'),'')
-    reuse=constraints(latest)['no_network']
+    reuse=effective_rules(chat)['no_network']
     failed=any(r.get('tool')==name and r.get('result',{}).get('error') for r in results)
     return 'refine_investment_memo' if failed or (reuse and run.get('memo')) else name
 
 
+def completed_artifacts(results):
+    found = {r['result'].get('artifact') for r in results if isinstance(r.get('result'),dict) and not r['result'].get('error')}
+    for r in results:
+        if not isinstance(r.get('result'),dict) or r['result'].get('error'): continue
+        if r.get('tool') in ('search_documents','read_document'): found.add('document_search')
+        if r.get('tool')=='read_document': found.add('document_read')
+    return found
+
+
+def cacheable_step(step):
+    result=step.get('result')
+    if step.get('state')!='completed' or not isinstance(result,dict) or result.get('error'):
+        return False
+    if result.get('status') in ('failed','error','blocked','excluded','excluded_after_cutoff','needs_ocr','empty','document_link'):
+        return False
+    name=step.get('tool')
+    if name=='web_search': return bool(result.get('results'))
+    if name=='search_company': return bool(result.get('items'))
+    if name in ('read_webpage','read_web_page'): return bool(str(result.get('text') or '').strip())
+    if name in ('search_documents','read_document','read_public_pdf'):
+        return any(str(s.get('text') or '').strip() for s in result.get('snippets',result.get('results',[])))
+    return True
+
+
+def report_input_fingerprint(run):
+    """Ignore timestamps, but include new original material and changed answers."""
+    snapshot=questions._question_snapshot(run,{})
+    for question in snapshot['questions'].values(): question.pop('revision',None)
+    value={'request':run.get('request',{}),'questions':snapshot,
+           'sources':{sid:source_fingerprint(source,run) for sid,source in questions.catalog(run).items()},
+           'calculations':run.get('calculations',[]),'valuations':run.get('valuation_history',[])}
+    return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
+
+
+def report_step_for_input(chat,run):
+    if not run or questions.report_sync(run)['needs_update']: return None
+    fingerprint=report_input_fingerprint(run)
+    return next((s for s in reversed(task_steps(chat)) if cacheable_step(s)
+                 and s.get('result',{}).get('artifact')=='report'
+                 and s.get('report_input_fingerprint')==fingerprint),None)
+
+
+def reusable_step(chat, name, args):
+    """Reuse useful results; save again only when the report's actual inputs changed."""
+    ctx = chat.get('turn_contexts',{}).get(chat.get('turn_id'),{})
+    if not ctx.get('resume_from_turn_id'): return None
+    successful = [s for s in task_steps(chat) if cacheable_step(s)]
+    if 'report' in TOOLS.get(name,set()) and name!='start_research':
+        run=store.get_run(chat['run_id']) if chat.get('run_id') else None
+        return report_step_for_input(chat,run)
+    return next((s for s in reversed(successful) if s.get('tool')==name and s.get('arguments',{})==args),None)
+
+
+ARTIFACT_LABELS = {'report':'保存研究报告','valuation':'完成估值计算','proposal':'整理估值方案',
+    'document':'取得年报','document_search':'查阅资料','document_read':'逐页查阅原文'}
+
+
+def delivery_state(chat, run, status='completed', observed=None):
+    ctx=chat.get('turn_contexts',{}).get(chat.get('turn_id'),{})
+    steps=task_steps(chat)
+    successful=[s for s in steps if s.get('state')=='completed' and not s.get('result',{}).get('error') and not s.get('reused_from_step_id')]
+    completed=[{'tool':s['tool'],'label':LABELS.get(s['tool'],'完成研究步骤'),'step_id':s.get('id',''),
+                'turn_id':s.get('turn_id')} for s in successful]
+    actual=completed_artifacts(successful)
+    if ctx.get('resume_from_turn_id') and 'report' in ctx.get('required_artifacts',[]) and not report_step_for_input(chat,run):
+        actual.discard('report')
+    pending=[ARTIFACT_LABELS.get(a,a) for a in ctx.get('required_artifacts',[]) if a not in actual]
+    last={}
+    for s in steps: last[(s.get('tool'),json.dumps(s.get('arguments',{}),sort_keys=True,ensure_ascii=False))]=s
+    for s in last.values():
+        if s.get('state') not in ('failed','cancelled'): continue
+        if s.get('tool') in ('build_investment_memo','refine_investment_memo','revise_report') and 'report' in actual: continue
+        pending.append(LABELS.get(s.get('tool'),'研究步骤')+'尚未完成')
+    if (observed or {}).get('status')=='partial': pending.extend(observed.get('gaps',[]))
+    if status!='completed' and not pending: pending.append('根据已完成结果整理答复')
+    pending=list(dict.fromkeys(pending))
+    if pending and status=='completed': status='partial'
+    before=ctx.get('report_revision_before')
+    after=(run or {}).get('report_revision')
+    changed=bool((after is not None and before is not None and after!=before) or (before is None and 'report' in actual))
+    return {'status':status,'completed':completed,'pending':pending,'report_revision_before':before,
+            'report_revision_after':after,'report_changed':changed,'can_resume':bool(pending),
+            'resume_from_turn_id':chat.get('turn_id') if pending else None,
+            'report_note':f'报告已保存至第 {after} 版' if changed else '本轮未保存新的报告版本'}
+
+
+def progress_message(delivery):
+    lines=[]
+    if delivery['completed']:
+        labels=list(dict.fromkeys(item['label'] for item in delivery['completed']))
+        lines.append('已完成：'+'、'.join(labels)+'。')
+    else: lines.append('尚无已完成的工具结果。')
+    lines.append(delivery['report_note']+'。')
+    if delivery['pending']: lines.append('未完成：'+'；'.join(delivery['pending'])+'。可继续未完成部分。')
+    return '\n\n'.join(lines)
+
+
 @competition.traced("agent", "conversation_id")
 def execute(cid):
-    start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];results=[];unit_retries=0;state_retries=0;denied=0
-    user_text=latest_user(chat)
-    rules=constraints(user_text)
-    saved_sources=(store.get_run(chat['run_id']) if chat.get('run_id') else chat).get('research_sources',[])
-    required=requested_artifacts(chat["messages"][-1]["content"])
-    if "document" in required and documents.attached_documents(chat) and not re.search(r"查找|找到|下载|获取|找",chat["messages"][-1]["content"]):
+    start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];unit_retries=0;state_retries=0;denied=0
+    user_text=task_request(chat)
+    rules=effective_rules(chat)
+    ctx=chat.get('turn_contexts',{}).get(turn_id,{})
+    results=[{'tool':s['tool'],'result':s['result'],'reused_from_step_id':s.get('id')}
+             for s in task_steps(chat) if ctx.get('resume_from_turn_id') and s.get('state')=='completed'
+             and isinstance(s.get('result'),dict) and not s['result'].get('error') and not s.get('reused_from_step_id')]
+    evidence_run=store.get_run(chat['run_id']) if chat.get('run_id') else None
+    saved_sources=(evidence_run or chat).get('research_sources',[])
+    required=set(ctx.get('required_artifacts',[])) if ctx.get('resume_from_turn_id') else requested_artifacts(user_text)
+    if rules['no_tools']: required=set()
+    if rules['no_report']: required.discard('report')
+    if rules['no_calculation'] or rules['no_valuation']: required.discard('valuation')
+    if rules['no_valuation']: required.discard('proposal')
+    if rules['no_network']: required.discard('document')
+    if "document" in required and documents.attached_documents(chat) and not re.search(r"查找|找到|下载|获取|找",user_text):
         required.remove("document");required.add("document_search")
+    if ctx:
+        store.update_conversation(cid,lambda c:c['turn_contexts'][turn_id].update(required_artifacts=sorted(required)))
     try:
         for decision_index in range(8):
             if store.conversation_cancelled(cid): raise research.Cancelled()
@@ -364,11 +491,14 @@ def execute(cid):
             policy_note="\n本轮用户禁止使用任何工具，只能 respond。" if rules['no_tools'] else (
                 "\n本轮禁止的联网、报告或估值动作不得提出；只用许可的已有材料答复，无法核实时说明缺口。" if
                 any(rules[k] for k in ('no_network','no_report','no_calculation','no_valuation')) else "")
-            decision,meta=model_json(SYSTEM+policy_note+'\n'+feedback_note+budget_note,{"today":date.today().isoformat(),"context":context(chat),"decisions_remaining":8-decision_index,
+            decision_run=store.get_run(chat['run_id']) if chat.get('run_id') else None
+            decision,meta=model_json(SYSTEM+policy_note+'\n'+feedback_note+budget_note,{"today":date.today().isoformat(),"context":context(chat,decision_run),"decisions_remaining":8-decision_index,
                 "valuation_methods":valuation.CATALOG,"competition_policy":competition.POLICY,
                 "proposed_scenarios":chat.get("proposals",[])[-4:],
                 "conversation":[{"role":m["role"],"content":m["content"]} for m in chat["messages"][-24:]],
                 "tool_results":results,"data_source":chat["data_source"],"user_constraints":rules,
+                "original_request":user_text,"continuation":bool(ctx.get('resume_from_turn_id')),
+                "available_tools":[name for name in TOOLS if name+':' in SYSTEM and not prohibited_reason(rules,name)],
                 "free_research_sources":[{**s,'text':s.get('text','')[:1800]} for s in chat.get('research_sources',[])[-12:]],
                 "product_capabilities":{"pdf_upload":"聊天输入区的上传 PDF，上传成功即接入当前对话；100 MB / 800 页",
                     "library":"接入资料可选择资料库已有 PDF","annual_reports":"查找年报或 fetch_annual_report 使用巨潮公开披露，无需 Tushare Token",
@@ -381,17 +511,19 @@ def execute(cid):
             store.update_conversation(cid,lambda c:c["model_calls"].append(meta|{"turn_id":turn_id}))
             if store.conversation_cancelled(cid): raise research.Cancelled()
             if decision.get('action')=='respond':
-                observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],user_text,saved_sources,str(decision.get('message','')))
+                observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],user_text,saved_sources,str(decision.get('message','')),run=evidence_run,require_body=rules['require_body'])
                 # At most two bounded recovery reads, leaving a decision for the answer.
-                if observed['status']=='partial' and observed['body_attempts']<2 and decision_index<7 and not constraints(user_text)['no_network']:
+                if observed['status']=='partial' and observed['body_attempts']<2 and decision_index<7 and not rules['no_network'] and not rules['no_tools']:
                     tried={canonical_url(s.get('arguments',{}).get('url','')) for s in chat['steps'] if s['turn_id']==turn_id and s['tool'] in ('read_webpage','read_web_page','read_public_pdf')}
                     source=next((s for s in observed['sources'] if canonical_url(s['url']) not in tried),None)
                     if source:
                         decision={'action':'tool','tool':'read_public_pdf' if re.search(r'\.pdf(?:[?#]|$)',source['url'],re.I) else 'read_webpage',
                                   'arguments':{'url':source['url']},'message':'按本轮要求补读关键正文，核对摘要是否有原文支持'}
             if decision.get("action")=="respond":
-                actual={r["result"].get("artifact") for r in results if isinstance(r.get("result"),dict)}
-                if any(r.get('tool')=='read_document' and not r.get('result',{}).get('error') for r in results): actual.add('document_read')
+                actual=completed_artifacts(results)
+                current_run=store.get_run(chat['run_id']) if chat.get('run_id') else {'facts':[]}
+                if ctx.get('resume_from_turn_id') and 'report' in required and not report_step_for_input(chat,current_run):
+                    actual.discard('report')
                 attempted={r.get("tool") for r in results}
                 unmet=required-actual
                 # A failed tool may legitimately need missing inputs. A mere plan is not completion.
@@ -410,7 +542,6 @@ def execute(cid):
                     continue
                 message=str(decision.get("message","")).strip()
                 if not message: raise ProviderError("模型未返回有效回复")
-                current_run=store.get_run(chat['run_id']) if chat.get('run_id') else {'facts':[]}
                 state_issues=claims(message,current_run)
                 if state_issues:
                     if state_retries<1 and decision_index<7:
@@ -427,16 +558,19 @@ def execute(cid):
                     message='已取得原文，但模型回答中的股本单位未通过核对：\n\n'+unit_issue+'\n\n本轮不采用该股数，也未将其写入财务底稿。原文依据保留在下方。'
                 message=with_document_citations(message[:12000],results)
                 message=with_web_citations(message,results)
-                observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],user_text,saved_sources,message)
+                observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],user_text,saved_sources,message,run=current_run,require_body=rules['require_body'])
                 if chat.get('run_id'):
                     observed['question_coverage']=questions.snapshot(store.get_run(chat['run_id']))
                 if observed['status']=='partial':
                     message='正文查证未完成：本轮搜索 '+str(observed['search_calls'])+' 次，取得 '+str(observed['search_results'])+' 条结果，新增正文 0。搜索摘要只能作为线索，以下回答不能视为已完成正文核验。\n\n'+message
                 if "report" in required and "report" not in actual and report_failures:
                     message="报告未保存成功，上一版仍保留。\n\n"+message
+                delivery=delivery_state(chat,store.get_run(chat['run_id']) if chat.get('run_id') else None,observed=observed)
+                if delivery['report_changed']: message+='\n\n'+delivery['report_note']+'。'
                 def finish(c):
                     c.setdefault('turn_coverage',{})[turn_id]=observed
-                    c["messages"].append({"id":uuid.uuid4().hex[:12],"role":"assistant","content":message[:16000],"time":store.now(),"turn_id":turn_id,'coverage':observed})
+                    c["messages"].append({"id":uuid.uuid4().hex[:12],"role":"assistant","content":message[:16000],"time":store.now(),"turn_id":turn_id,'coverage':observed,
+                        'delivery':delivery,'incomplete':delivery['status']!='completed'})
                     c["state"]="idle"
                 store.update_conversation(cid,finish)
                 return
@@ -456,16 +590,28 @@ def execute(cid):
             event={"id":sid,"turn_id":turn_id,"tool":name,"message":str(decision.get("message","执行研究工具"))[:350],
                    "arguments":args,"state":"running","started_at":store.now()}
             store.update_conversation(cid,lambda c:c["steps"].append(event))
+            reuse=None
             try:
-                if name=="search_documents" and sum(r.get("tool")==name for r in results)>=2:
+                reuse=reusable_step(chat,name,args)
+                if reuse:
+                    result=reuse['result'];state='completed'
+                elif name=="search_documents" and sum(r.get("tool")==name for r in results)>=2:
                     raise ValueError("本轮已完成两次全文检索。请读取已命中页，或对 pages_without_text 的扫描页调用 read_document。若仍缺资料，直接总结已有证据与具体缺口，不再重复检索。")
-                result=tool(chat,name,args);state="failed" if isinstance(result,dict) and (result.get('error') or result.get('status') in ('error','excluded','excluded_after_cutoff','needs_ocr')) else "completed"
+                else:
+                    result=tool(chat,name,args,decision_run);state="failed" if isinstance(result,dict) and (result.get('error') or result.get('status') in ('error','excluded','excluded_after_cutoff','needs_ocr')) else "completed"
             except (ValueError,KeyError,ProviderError,TypeError) as error:
                 result={"error":str(error)[:1200] if not isinstance(error,KeyError) else "未找到研究或材料"};state="failed"
+            report_fingerprint=None
+            if state=='completed' and isinstance(result,dict) and result.get('artifact')=='report' and chat.get('run_id'):
+                report_fingerprint=(reuse or {}).get('report_input_fingerprint') or report_input_fingerprint(store.get_run(chat['run_id']))
             def complete(c):
                 target=next(s for s in c["steps"] if s["id"]==sid)
                 target.update(state=state,finished_at=store.now(),result=result)
-                c.setdefault('turn_coverage',{})[turn_id]=coverage([s for s in c['steps'] if s['turn_id']==turn_id],user_text,saved_sources)
+                if reuse: target.update(reused_from_step_id=reuse['id'],message='复用已完成的'+LABELS.get(name,'研究结果'))
+                if report_fingerprint: target['report_input_fingerprint']=report_fingerprint
+                if name=='start_research' and state=='completed' and turn_id in c.get('turn_contexts',{}):
+                    c['turn_contexts'][turn_id]['run_id']=c.get('run_id')
+                c.setdefault('turn_coverage',{})[turn_id]=coverage([s for s in c['steps'] if s['turn_id']==turn_id],user_text,saved_sources,run=evidence_run,require_body=rules['require_body'])
             store.update_conversation(cid,complete)
             results.append({"tool":name,"result":result})
         raise ProviderError("本轮已达到 8 次模型决策上限，已完成的结果已保存；可继续提出下一步要求")
@@ -489,21 +635,27 @@ def finish_restricted(cid,turn_id,error,saved_sources):
     lines=[f"- {f['year']} 年{f['label']}：{f['value']} 元（来源状态：{f['status']}）" for f in facts]
     message="本轮没有执行被禁止的工具。模型未能完成解释性答复："+error+"\n\n"
     message+=("当前已有的结构化事实仅包括：\n"+"\n".join(lines) if lines else "当前没有可直接列出的无冲突结构化财务事实。")
-    message+="\n\n这些数字不足以证明经营原因或完成原问题；已有资料和报告均未因此修改。"
-    observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],latest_user(chat),saved_sources,message)
+    message+="\n\n这些数字不足以证明经营原因或完成原问题。"
+    observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],task_request(chat),saved_sources,message,run=run,require_body=effective_rules(chat)['require_body'])
+    delivery=delivery_state(chat,run,'partial',observed)
+    message+='\n\n'+progress_message(delivery)
     def finish(c):
         c['state']='idle'
         c.setdefault('turn_coverage',{})[turn_id]=observed
         c['messages'].append({"id":uuid.uuid4().hex[:12],"role":"assistant","content":message,"time":store.now(),
-            "turn_id":turn_id,"coverage":observed,"incomplete":True})
+            "turn_id":turn_id,"coverage":observed,"incomplete":True,'delivery':delivery})
     store.update_conversation(cid,finish)
 
 def finish_error(cid,turn_id,message,state):
+    chat=store.get_conversation(cid)
+    run=store.get_run(chat['run_id']) if chat.get('run_id') else None
     def change(c):
         c["state"]=state
         for step in c["steps"]:
             if step["turn_id"]==turn_id and step["state"]=="running": step.update(state=state,finished_at=store.now())
-        observed=c.get('turn_coverage',{}).get(turn_id) or coverage([s for s in c['steps'] if s['turn_id']==turn_id],latest_user(c))
+        observed=c.get('turn_coverage',{}).get(turn_id) or coverage([s for s in c['steps'] if s['turn_id']==turn_id],task_request(c),run=run,require_body=effective_rules(c)['require_body'])
+        delivery=delivery_state(c,run,state,observed)
         c.setdefault('turn_coverage',{})[turn_id]=observed
-        c["messages"].append({"id":uuid.uuid4().hex[:12],"role":"assistant","content":message,"time":store.now(),"turn_id":turn_id,"error":True,'coverage':observed})
+        c["messages"].append({"id":uuid.uuid4().hex[:12],"role":"assistant","content":message+'\n\n'+progress_message(delivery),"time":store.now(),"turn_id":turn_id,"error":True,'coverage':observed,
+            'incomplete':True,'delivery':delivery})
     store.update_conversation(cid,change)

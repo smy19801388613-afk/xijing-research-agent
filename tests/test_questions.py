@@ -105,3 +105,124 @@ def test_conflicting_financial_evidence_does_not_complete(run):
     run['facts']=[{'id':'revenue-2025','label':'营业收入','metric':'revenue','year':2025,'value':'100','status':'conflict','evidence_ids':['official']}]
     saved=questions.validate_updates(run,[answer(run)])[0]
     assert saved['status']=='conflict'
+
+
+def draft(run,answers=None):
+    return {'title':'合同核对','summary':'合同签订与收款分别验证','stance':'继续核对回款',
+        'theses':[{'title':name,'body':'原文披露签订合同，回款仍需核对','counter_evidence':'合同不等于收款',
+                    'invalidate_if':'取得未实际签约的证据','evidence_ids':['official'],'status':'inference'} for name in ('合同','回款')],
+        'sections':[{'key':key,'body':'保留公司披露与研究推断的区别','evidence_ids':['official'],'status':'inference'} for key in deep_research.SECTION_TITLES],
+        'questions':['后续核对回款'],'limitations':[],'question_answers':answers or []}
+
+
+def test_edit_question_keeps_identity_evidence_and_history_but_requires_review(run):
+    original=questions.update(run['id'],[answer(run)])['items'][0]
+    view=questions.edit(run['id'],original['id'],{'question':'合同是否已经完成回款？','priority':'high'})
+    edited=view['items'][0]
+    assert edited['id']==original['id'] and edited['bindings']==original['bindings']
+    assert edited['answer']==original['answer'] and edited['status']=='partial' and edited['needs_review']
+    assert edited['priority']=='high' and not view['complete']
+    assert edited['history'][-1]['question']==original['question']
+    # A new explicit assessment may clear the semantic review gap.
+    checked=questions.update(run['id'],[answer(run,gaps=[],status='partial')])['items'][0]
+    assert not checked['needs_review']
+
+
+def test_priority_archive_and_restore_are_lossless_and_excluded_from_completion(run):
+    original=questions.update(run['id'],[answer(run)])['items'][0]
+    qid=original['id']
+    view=questions.edit(run['id'],qid,{'priority':'low','archived':True})
+    assert view['total']==0 and view['archived_count']==1 and not view['complete']
+    assert view['items'][0]['bindings']==original['bindings']
+    with pytest.raises(ValueError,match='归档'): questions.update(run['id'],[answer(run)])
+    view=questions.edit(run['id'],qid,{'archived':False})
+    assert view['complete'] and view['total']==1 and view['items'][0]['priority']=='low'
+    assert view['items'][0]['answer']==original['answer']
+
+
+def test_normalized_plan_deduplicates_without_restoring_archived_question(run):
+    view=questions.plan(run['id'],['AI 合同回款了吗？','ai合同回款了吗 ?'])
+    assert view['total']==2
+    qid=view['items'][1]['id']
+    questions.edit(run['id'],qid,{'archived':True})
+    after=questions.plan(run['id'],['AI合同回款了吗？'])
+    assert len(after['items'])==2 and after['archived_count']==1
+
+
+def test_edit_does_not_make_original_question_id_collide_with_new_plan(run):
+    old=questions.inventory(run)[0]
+    questions.edit(run['id'],old['id'],{'question':'合同已经回款了吗？'})
+    view=questions.plan(run['id'],[old['question']])
+    assert len(view['items'])==2 and len({q['id'] for q in view['items']})==2
+
+
+@pytest.mark.parametrize('changes',[{'priority':[]},{'archived':'false'},{'question':''},{'bindings':[]}])
+def test_question_edit_rejects_invalid_fields_atomically(run,changes):
+    before=store.get_run(run['id'])
+    with pytest.raises(ValueError):questions.edit(run['id'],questions.inventory(run)[0]['id'],changes)
+    assert store.get_run(run['id'])==before
+
+
+def test_report_sync_tracks_question_answers_and_explicit_update_without_revaluing(run):
+    from app import valuation
+    valuation.save_result(run['id'],'pb',{'book_equity_100m':'10','multiple':'2'})
+    before=store.get_run(run['id'])
+    memo=deep_research.validate_memo(draft(before,[answer(run)]),before)
+    deep_research.save_memo(run['id'],memo,'初稿')
+    first=store.get_run(run['id'])
+    assert questions.report_sync(first)['status']=='current'
+    questions.update(run['id'],[answer(run,answer='合同已签订，款项尚未验证。',status='partial',gaps=['缺收款凭证'])])
+    changed=store.get_run(run['id'])
+    sync=questions.report_sync(changed)
+    assert sync['needs_update'] and sync['changed_question_ids']==[questions.inventory(run)[0]['id']]
+    assert changed['memo']==first['memo'] and changed['report_revision']==first['report_revision']
+    revised=deep_research.validate_memo(draft(changed),changed)
+    deep_research.save_memo(run['id'],revised,'明确更新报告')
+    updated=store.get_run(run['id'])
+    assert questions.report_sync(updated)['status']=='current'
+    assert updated['memo_revisions'][-1]['memo']==first['memo']
+    assert updated['valuation_history']==first['valuation_history']
+
+
+def test_priority_only_change_does_not_mark_report_outdated(run):
+    deep_research.save_memo(run['id'],deep_research.validate_memo(draft(run),run),'初稿')
+    questions.edit(run['id'],questions.inventory(run)[0]['id'],{'priority':'high'})
+    assert questions.report_sync(store.get_run(run['id']))['status']=='current'
+
+
+def test_changed_source_even_with_same_quote_marks_question_and_report_for_review(run):
+    deep_research.save_memo(run['id'],deep_research.validate_memo(draft(run,[answer(run)]),run),'初稿')
+    def change(r):r['research_sources'][0]['text']+='该合同已于次日终止。'
+    store.update_run(run['id'],change)
+    current=store.get_run(run['id']);stored=copy.deepcopy(current)
+    assert questions.snapshot(current)['items'][0]['needs_review']
+    sync=questions.report_sync(current)
+    assert sync['needs_update'] and sync['source_changed_question_ids']==[questions.inventory(run)[0]['id']]
+    assert sync['changed_source_ids']==['official']
+    assert current==stored==store.get_run(run['id'])
+
+
+def test_changed_report_source_without_question_binding_also_marks_report_stale(run):
+    deep_research.save_memo(run['id'],deep_research.validate_memo(draft(run),run),'初稿')
+    store.update_run(run['id'],lambda r:r['research_sources'][0].update(published_at=None))
+    sync=questions.report_sync(store.get_run(run['id']))
+    assert sync['needs_update'] and sync['changed_source_ids']==['official']
+
+
+def test_historical_report_remains_untracked_without_mutating_history(run):
+    before=store.get_run(run['id'])
+    assert questions.report_sync(before)['status']=='untracked'
+    assert store.get_run(run['id'])==before
+
+
+@pytest.mark.parametrize('change_kind',['question','source'])
+def test_concurrent_question_or_source_edit_cannot_be_stamped_as_synchronized(run,change_kind):
+    memo=deep_research.validate_memo(draft(run,[answer(run)]),run)
+    if change_kind=='question':
+        questions.edit(run['id'],questions.inventory(run)[0]['id'],{'completion_criteria':'必须取得银行收款凭证'})
+    else:
+        store.update_run(run['id'],lambda r:r['research_sources'][0].update(text='公司尚未签订付费合同。'))
+    changed=store.get_run(run['id'])
+    with pytest.raises(ValueError,match='生成期间'):
+        deep_research.save_memo(run['id'],memo,'不得覆盖并发修改')
+    assert store.get_run(run['id'])==changed

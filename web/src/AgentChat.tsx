@@ -30,6 +30,21 @@ function turnCoverage(chat:any,turnId:string){
 }
 function Coverage({value}:any){if(!value||!(value.search_calls||value.body_sources||value.document_pages||value.reused_cited_sources||['partial','unknown'].includes(value.status)))return null;if(value.status==='unknown')return <div className="turn-coverage">旧记录未保存完整的本轮来源覆盖，请展开研究过程与报告来源核对。</div>;return <div className={'turn-coverage '+value.status} role="status"><strong>{value.status==='partial'?'正文查证未完成':'本轮资料覆盖'}</strong><span>搜索 {value.search_calls} 次 · 结果 {value.search_results} 条 · 新增网络正文 {value.body_sources} 篇 · 本地读页 {value.document_pages}</span>{value.reused_cited_sources!=null&&<small>引用已有材料 {value.reused_cited_sources} 条（按实际链接统计）</small>}{value.status==='partial'&&<small>本轮未取得可用正文；摘要只作为线索，不能视为已完成正文核验。</small>}{value.question_coverage&&<small>研究问题：{value.question_coverage.counts.supported} / {value.question_coverage.total} 项有证据回答，语义判断待复核。</small>}{!!value.unread_sources&&<small>另有 {value.unread_sources} 个来源未取得正文{value.failed_sources?'，其中 '+value.failed_sources+' 个读取失败':''}。</small>}</div>}
 function WebReferences({sources}:any){return <div className="web-references">{sources.filter((s:any)=>/^https?:\/\//i.test(s.url||'')).map((s:any,i:number)=><a href={s.url} target="_blank" rel="noopener noreferrer" key={s.id||s.url||i}><Globe2 size={15}/><span>{s.title||s.url}<small>{s.published_at||'日期未确认'}{s.read_status?' · '+(({read:'已读原文',article_text:'已读原文',public_pdf_text:'已读PDF原文',pdf_link_only:'PDF链接，未读正文',failed:'未取得正文',completed:'已读原文',body_read:'已读原文',snippet_only:'搜索摘要',search_snippet:'搜索摘要'} as any)[s.read_status]||'待查阅'):''}</small></span><ExternalLink size={12}/></a>)}</div>}
+const constraintNames:any={saved_only:'只用已保存材料',no_network:'不联网',no_report:'不修改报告',no_calculation:'不计算估值',no_valuation:'不做估值',require_body:'核对原文',no_tools:'不调用工具',no_question_writes:'不修改问题记录'};
+function ConstraintChips({value}:any){
+ if(!value)return null;
+ const persistent=value.persistent_labels||Object.entries(value.persistent_rules||{}).filter(([key,v])=>Boolean(v)&&constraintNames[key]).map(([key])=>constraintNames[key]);
+ const labels=value.labels||[];
+ if(!labels.length&&!persistent.length)return null;
+ return <div className="effective-constraints" aria-label="当前有效约束"><span className="constraint-scope">{value.scope==='continuation'?'续查沿用':'本轮约束'}</span>{labels.map((label:string,i:number)=><span className="constraint-chip" key={i}>{label}</span>)}{!!persistent.length&&<details><summary>持续约束 · {persistent.length} 项</summary><div>{persistent.map((label:string)=><span className="constraint-chip" key={label}>{label}</span>)}</div></details>}</div>
+}
+function Delivery({value,onResume,canResume,disabled}:any){
+ if(!value)return null;
+ const incomplete=value.status!=='completed',completed=value.completed||[],pending=value.pending||[];
+ if(!incomplete&&!value.report_changed)return null;
+ const titles:any={completed:'本轮已完成',partial:'已保留进展，仍有事项未完成',failed:'本轮未完成',cancelled:'已停止，进展已保留'};
+ return <section className={'turn-delivery '+value.status} aria-label="本轮执行结果"><div className="delivery-heading">{incomplete?<AlertCircle size={17}/>:<Check size={17}/>}<strong>{titles[value.status]||'本轮执行结果'}</strong></div>{value.report_changed?<p>报告已更新至第 {value.report_revision_after} 版。</p>:value.report_revision_before!=null&&<p>报告保留为第 {value.report_revision_before} 版。</p>}{!!completed.length&&<details><summary>已完成 {completed.length} 个步骤</summary><ul>{completed.map((step:any,i:number)=><li key={step.step_id||i}>{step.label||toolNames[step.tool]||step.tool}</li>)}</ul></details>}{!!pending.length&&<div className="delivery-pending"><strong>还需完成</strong><ul>{pending.map((item:string,i:number)=><li key={i}>{item}</li>)}</ul></div>}{canResume&&value.can_resume&&value.resume_from_turn_id&&<button type="button" className="secondary" disabled={disabled} onClick={()=>onResume(value.resume_from_turn_id)}>继续未完成部分<ChevronRight size={15}/></button>}</section>
+}
 function Step({step,onOpen,onAdopt,busy,accepted}:any){
   const [open,setOpen]=useState(false),result=step.result;
   return <div className={'agent-step '+step.state}>
@@ -46,10 +61,11 @@ function Step({step,onOpen,onAdopt,busy,accepted}:any){
     {open&&result&&<details className="tool-raw"><summary>查看工具原始结果</summary><pre className="tool-result">{JSON.stringify(result,null,2)}</pre></details>}
   </div>
 }
-export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,prompt,onPromptConsumed}:any){
+export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,prompt,autoSendPrompt=false,onPromptConsumed}:any){
   const [chat,setChat]=useState<any>(null),[chats,setChats]=useState<any[]>([]),[draft,setDraft]=useState(''),[profile,setProfile]=useState(config.active_model||''),[sending,setSending]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true);
   const [attached,setAttached]=useState<any[]>([]),[historyNotice,setHistoryNotice]=useState(''),[showMaterials,setShowMaterials]=useState(false);
   const chatRef=useRef<any>(null);
+  const consumedPrompt=useRef(''),sendingRef=useRef(false);
   const bottom=useRef<HTMLDivElement>(null),textarea=useRef<HTMLTextAreaElement>(null),callback=useRef(onRunUpdated),openCallback=useRef(onOpen);
   callback.current=onRunUpdated;openCallback.current=onOpen;
   const active=chat?.state==='running';
@@ -62,7 +78,7 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
   useEffect(()=>{setProfile(config.active_model||'')},[config.active_model]);
   async function list(){const v=await api('/conversations'+(run?.id?'?run_id='+run.id:''));setChats(v);return v}
   useEffect(()=>{let alive=true;api('/conversations'+(run?.id?'?run_id='+run.id:'')).then(async rows=>{if(!alive)return;setChats(rows);const saved=localStorage.getItem(selectionKey);const selected=rows.find((r:any)=>r.id===saved)||rows[0];if(selected){const c=await api('/conversations/'+selected.id);if(alive)remember(c)}}).catch(e=>alive&&setError(e.message)).finally(()=>alive&&setLoading(false));return()=>{alive=false}},[run?.id]);
-  useEffect(()=>{if(prompt){setDraft(prompt);textarea.current?.focus();onPromptConsumed?.()}},[prompt]);
+  useEffect(()=>{if(!prompt){consumedPrompt.current='';return}if(loading||consumedPrompt.current===prompt)return;setDraft(prompt);textarea.current?.focus();if(autoSendPrompt&&active)return;consumedPrompt.current=prompt;onPromptConsumed?.();if(autoSendPrompt){if(!profile){setError('请先选择模型连接，再发送更新报告请求。');return}send(undefined,prompt)}},[prompt,autoSendPrompt,loading,active]);
   useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth',block:'end'})},[chat?.messages.length,chat?.steps.length,active]);
   useEffect(()=>{
     if(!chat?.id||!active)return;
@@ -73,11 +89,11 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
   },[chat?.id,active]);
   async function newChat(unbound=false){setError('');try{const c=await post('/conversations',{run_id:unbound?null:run?.id||null});remember(c);setDraft('');await list()}catch(e:any){setError(e.message)}}
   async function select(id:string){if(!id)return;setError('');try{remember(await api('/conversations/'+id))}catch(e:any){setError(e.message)}}
-  async function send(e?:any,content=draft){e?.preventDefault();if(!content.trim()||sending||active)return;setSending(true);setError('');try{
+  async function send(e?:any,content=draft,resumeFrom?:string){e?.preventDefault();if(!content.trim()||sendingRef.current||active)return;sendingRef.current=true;setSending(true);setError('');try{
     const c=await ensureChat();
-    const next=await post('/conversations/'+c.id+'/messages',{message:content,profile_id:profile||null});
-    remember(next);setDraft('');await list();
-  }catch(e:any){setError(e.message)}finally{setSending(false)}}
+    const next=await post('/conversations/'+c.id+'/messages',{message:content,profile_id:profile||null,...(resumeFrom?{resume_from_turn_id:resumeFrom}:{})});
+    remember(next);if(!resumeFrom)setDraft('');await list();
+  }catch(e:any){setError(e.message)}finally{sendingRef.current=false;setSending(false)}}
   async function openArtifact(tab:string){if(chat?.run_id)await callback.current(chat.run_id);openCallback.current(tab)}
   const linkedRun=chat&&!chat.run_id?null:run;
   const contextName=linkedRun?linkedRun.company+' · '+linkedRun.request.year:'自由研究';
@@ -95,6 +111,7 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
   ];
   return <div className="agent-page"><div className="agent-top"><div><h1>{linkedRun?linkedRun.company:'研究对话'}</h1></div><div className="button-row"><button className="secondary" disabled={active} onClick={()=>newChat(false)}><Plus size={15}/>新话题</button><button className="text-link" disabled={active} onClick={()=>newChat(true)}>自由研究</button><button className={'secondary materials-toggle '+(showMaterials?'selected':'')} aria-expanded={showMaterials} onClick={()=>setShowMaterials(!showMaterials)}><BookOpen size={15}/>研究资料</button></div></div>
     <div className="chat-context"><span><Layers3 size={15}/>{contextName}</span><button onClick={onNewResearch}><Search size={14}/>选择公司</button><i/><label><span>模型</span><select aria-label="对话模型" disabled={active} value={profile} onChange={e=>setProfile(e.target.value)}>{config.profiles?.map((p:any)=><option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}</select></label><button className="context-settings" aria-label="设置模型连接" onClick={()=>onOpen('settings')}><SlidersHorizontal size={14}/></button></div>
+    <ConstraintChips value={chat?.effective_constraints}/>
     <div className={'chat-split '+(showMaterials?'materials-open':'')}><section className="conversation">
       {!!chats.length&&<div className="conversation-selector"><MessageSquare size={13}/><select aria-label="历史研究对话" value={chat?.id||''} disabled={active} onChange={e=>select(e.target.value)}><option value="" disabled>选择对话</option>{chats.map(c=><option key={c.id} value={c.id}>{c.title} · {new Date(c.updated_at).toLocaleDateString('zh-CN')}</option>)}</select><button type="button" className="icon-button" title="删除当前对话，可从回收站恢复" aria-label="删除当前对话" disabled={active||sending} onClick={removeChat}><Trash2 size={14}/></button></div>}
       {historyNotice&&<div className="history-notice" role="status">{historyNotice}<button className="text-link" onClick={()=>onOpen('trash')}>打开回收站</button></div>}
@@ -104,6 +121,7 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
           <div className="message-row"><span className="message-avatar">{m.role==='user'?<User size={15}/>:<Layers3 size={17}/>}</span><div className={'message-content '+(m.error?'error':'')}><div className="message-label">{m.role==='user'?'你':'研序'}<time>{new Date(m.time).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}</time></div><ResearchText className="chat-prose" text={m.content}/></div></div>
           {!!steps.length&&<details className="tool-timeline" open={active&&i===messages.length-1}><summary><ActivityIcon running={active&&i===messages.length-1}/><span>{active&&i===messages.length-1?'正在研究':'研究过程'} · {steps.length} 个步骤</span>{steps.some((s:any)=>s.result?.artifact==='proposal')&&<span className="badge">含估值方案</span>}<ChevronDown size={14}/></summary><div className="tool-timeline-items">{steps.map((s:any)=><Step key={s.id} step={s} onOpen={openArtifact} busy={active||sending} accepted={chat?.proposals?.find((p:any)=>p.id===s.result?.proposal?.id)?.state==='accepted'} onAdopt={(p:any)=>send(undefined,'我采用估值方案 '+p.id+'（'+p.method_name+'），请按展示的参数计算并保存。')}/>)}</div></details>}
           {m.role==='assistant'&&<Coverage value={m.coverage||turnCoverage(chat,m.turn_id)}/>}
+          {m.role==='assistant'&&<Delivery value={m.delivery} canResume={i===messages.length-1} disabled={active||sending||!profile} onResume={(id:string)=>send(undefined,'继续未完成部分',id)}/>}
           {m.role==='user'&&i===messages.length-1&&active&&<div className="thinking-status"><LoaderCircle size={14} className="spin"/>{steps.at(-1)?.state==='running'?'正在执行工具…':'正在结合你的问题和工具结果继续研究…'}</div>}
         </div>})}<div ref={bottom}/>
       </div>

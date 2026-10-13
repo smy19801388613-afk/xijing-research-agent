@@ -212,3 +212,55 @@ def test_report_dispatch_respects_no_repeat_search_and_reuses_failed_build(run):
     chat['messages'][0]['content']='请联网重新调查并生成报告'
     assert agent.memo_tool_for_request('build_investment_memo',chat,[])=='build_investment_memo'
     assert agent.memo_tool_for_request('build_investment_memo',chat,[{'tool':'build_investment_memo','result':{'error':'引用无效'}}])=='refine_investment_memo'
+
+
+@pytest.mark.parametrize('operation',['build','refine'])
+def test_permitted_report_preserves_question_ledger_despite_model_edits(run,monkeypatch,operation):
+    from app import questions
+    from app.turn_constraints import effective_rules
+    r=source_run(run)
+    original=copy.deepcopy(r['research_questions'])
+    chat=store.new_conversation(r['id'])
+    # Pass the pre-turn chat deliberately: the nested workflow must reload the
+    # actual user's current restriction, rather than trust its caller's snapshot.
+    current=store.begin_turn(chat['id'],'请生成并保存报告，不修改研究问题。','stub','documents')
+    assert effective_rules(current)['no_question_writes'] and not effective_rules(current)['no_report']
+    monkeypatch.setattr(questions,'plan',lambda *a,**kw:pytest.fail('question planning is forbidden'))
+    monkeypatch.setattr(questions,'apply',lambda *a,**kw:pytest.fail('question updates are forbidden'))
+    draft=candidate()
+    draft['question_answers']=[{'question_id':'model-invented-id','answer':'不得采纳的新答案'}]
+    replies=[draft]
+    if operation=='build':
+        monkeypatch.setattr(deep.documents,'attached_documents',lambda _: [{'ticker':'300271.SZ','year':2025,'title':'2025年年度报告','page_count':194}])
+        monkeypatch.setattr(deep.documents,'ensure_index',lambda _: [])
+        monkeypatch.setattr(deep.documents,'search_attached',lambda *args: {'snippets':[]})
+        monkeypatch.setattr(deep.web_research,'search',lambda q,**kw: {'queries':q,'results':[],'limitations':[]})
+        replies=[{'questions':[{'question':'模型擅自新增的问题','completion_criteria':'不应落库'}],
+                  'queries':['华宇软件 产品 客户'],'pdf_queries':['产品'],'focus':'商业化'},
+                 {'queries':[],'gaps':[]},draft,{'issues':[],'requires_revision':False}]
+    else:
+        monkeypatch.setattr(deep.web_research,'search',lambda *a,**kw:pytest.fail('refine should not search'))
+    outputs=iter(replies)
+    def model(system,payload,*a,**kw):
+        assert deep.QUESTION_READ_ONLY in system
+        return next(outputs),{'model':'stub'}
+    monkeypatch.setattr(deep,'model_json',model)
+    result=getattr(deep,operation)(r['id'],'允许更新报告，但保持研究问题',chat)
+    saved=store.get_run(r['id'])
+    assert result['artifact']=='report' and result['revision']==2
+    assert '问题记录保持不变' in result['question_update_note']
+    assert saved['research_questions']==original
+    assert saved['memo']['question_answers']==[]
+    assert saved['memo_revisions'][0]['memo']==r['memo']
+    assert saved['valuation_history']==r['valuation_history']
+
+
+def test_save_memo_can_explicitly_disallow_question_side_effects(run):
+    r=source_run(run);original=copy.deepcopy(r['research_questions'])
+    memo=deep.validate_memo(candidate(),r)
+    # Guard the persistence boundary independently of prompt or validation use.
+    memo['question_answers']=[{'question_id':'invented','answer':'不应写入'}]
+    result=deep.save_memo(r['id'],memo,'只改报告',allow_question_writes=False)
+    saved=store.get_run(r['id'])
+    assert result['artifact']=='report' and saved['research_questions']==original
+    assert saved['memo']['question_answers']==[]

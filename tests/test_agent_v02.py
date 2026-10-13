@@ -188,7 +188,8 @@ def test_explicit_report_update_cannot_finish_with_only_a_plan(run,monkeypatch):
     monkeypatch.setattr(agent,"model_json",lambda *a,**kw:(next(decisions),{"model":"test"}))
     agent.execute(c["id"])
     saved=store.get_conversation(c["id"])
-    assert saved["messages"][-1]["content"]=="已保存新版本"
+    assert saved["messages"][-1]["content"].startswith("已保存新版本")
+    assert saved["messages"][-1]["delivery"]["report_revision_after"]==2
     assert store.get_run(run["id"])["report_revision"]==2
     assert agent.requested_artifacts("先不要修改报告，也不要直接计算。")==set()
     assert agent.requested_artifacts("请把 DCF 假设整理成待确认方案卡片，先不计算。")=={"proposal"}

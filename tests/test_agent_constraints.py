@@ -43,7 +43,7 @@ def test_actual_value_prompt_never_grants_report_permission(chat, monkeypatch):
 
 def test_rejected_tool_then_model_failure_returns_bounded_existing_facts(chat, monkeypatch):
     store.update_run(chat['run_id'],lambda r:r['facts'].append(
-        {'year':2025,'label':'营业收入','value':'123','status':'api_only'}))
+        {'id':'revenue-2025','year':2025,'label':'营业收入','value':'123','status':'api_only'}))
     current=begin(chat,'只用已有材料回答，不联网、不改报告，不算估值。')
     calls=[]
     def decide(*args,**kwargs):

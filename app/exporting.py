@@ -48,7 +48,10 @@ def legacy_scenario_summary(value):
 def delivery_note(run, audit, packaged):
     scope='完整审计底稿，包含全部历史版本及原始记录。' if audit else '当前报告；完整历史版本、原始计算和运行记录保留在完整审计导出及证据包中。'
     links='已打包的 PDF 使用相对路径；外部链接需联网，详见 manifest.json。' if packaged else '本地 PDF 链接需在运行研序服务的本机打开；转交他人请使用完整证据包。'
-    return f"报告第 {run.get('report_revision',1)} 版。{scope}{links}"
+    from .questions import report_sync
+    sync=report_sync(run)
+    status=(' '+sync['message']+' 问题清单展示当前研究记录，报告正文保留原版本。') if sync['needs_update'] else ''
+    return f"报告第 {run.get('report_revision',1)} 版。{scope}{links}{status}"
 
 def valuation_state_message(run):
     from .report_state import report_valuation_status
@@ -158,9 +161,14 @@ def markdown(run, audit=False, document_paths=None):
     question_view=snapshot(run)
     lines += ['\n## 问题级证据清单',question_view['note']]
     for q in question_view['items']:
-        lines += ['\n### '+q['question']+' · '+q['label'],q.get('answer') or '尚未回答','完成条件：'+q['completion_criteria']]
-        for b in q.get('bindings',[]): lines += ['- '+b['relation']+'：'+b['quote']+'（'+b['title']+'） · '+b['reason']]
+        if q.get('archived') and not audit: continue
+        lines += ['\n### '+q['question']+' · '+q['label']+(' · 已归档' if q.get('archived') else ''),q.get('answer') or '尚未回答','完成条件：'+q['completion_criteria'],
+                  '优先级：'+{'high':'高','medium':'中','low':'低'}.get(q.get('priority','medium'),'中')]
+        for b in q.get('bindings',[]):
+            source=f"[{b['title']}]({export_url(b['url'])})" if b.get('url') else b['title']
+            lines += ['- '+('反方' if b['relation']=='counter' else '支持')+'：'+b['quote']+'（'+source+'） · '+b['reason']]
         lines += ['反方：'+(q.get('counter_evidence') or '待补充')]+['缺口：'+g for g in q.get('gaps',[])]
+        if q.get('next_action'): lines += ['下一步：'+q['next_action']]
     if memo.get('questions'): lines += ['\n## 下一步核实清单']+['- '+q for q in memo['questions']]
     if memo.get('sources'):
         lines += ['\n## 研究来源目录']
@@ -230,8 +238,12 @@ def printable(run, audit=False, document_paths=None):
     question_view=snapshot(run)
     scenario_html+='<h2>问题级证据清单</h2><p>'+e(question_view['note'])+'</p>'
     for q in question_view['items']:
-        scenario_html+='<article><h3>'+e(q['question'])+' · '+e(q['label'])+'</h3><p>'+e(q.get('answer') or '尚未回答')+'</p><p>完成条件：'+e(q['completion_criteria'])+'</p>'
-        for b in q.get('bindings',[]):scenario_html+='<blockquote>'+e(b['quote'])+'</blockquote><p>'+e(b['title']+' · '+b['reason'])+'</p>'
+        if q.get('archived') and not audit: continue
+        scenario_html+='<article><h3>'+e(q['question'])+' · '+e(q['label'])+(' · 已归档' if q.get('archived') else '')+'</h3><p>'+e(q.get('answer') or '尚未回答')+'</p><p>完成条件：'+e(q['completion_criteria'])+'</p><p>优先级：'+e({'high':'高','medium':'中','low':'低'}.get(q.get('priority','medium'),'中'))+'</p>'
+        for b in q.get('bindings',[]):
+            source='<a href="'+e(export_url(b['url']))+'">'+e(b['title'])+'</a>' if b.get('url') else e(b['title'])
+            scenario_html+='<blockquote>'+e(b['quote'])+'</blockquote><p>'+('反方' if b['relation']=='counter' else '支持')+' · '+source+' · '+e(b['reason'])+'</p>'
+        if q.get('next_action'): scenario_html+='<p>下一步：'+e(q['next_action'])+'</p>'
         scenario_html+='<p>反方：'+e(q.get('counter_evidence') or '待补充')+'</p><ul>'+''.join('<li>'+e(g)+'</li>' for g in q.get('gaps',[]))+'</ul></article>'
     events="".join("<li>"+e(v["time"])+" · "+e(v["label"])+"："+e(v["detail"])+"</li>" for v in run["events"])
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>{e(run['company'])} · 研究底稿</title>

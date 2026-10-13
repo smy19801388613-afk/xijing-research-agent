@@ -77,3 +77,21 @@ def test_change_does_not_force_a_percentage():
     assert calculation_change({'value':None,'change':'-100000000'})=='金额变化 -1.00 亿元'
     assert calculation_change({'value':None})=='不适用/缺失'
     assert calculation_change({'value':'0','change':'0'})=='+0.00%'
+
+
+def test_question_export_marks_stale_report_and_keeps_archived_audit(run):
+    from app import questions
+    q = questions.create('当前问题独占文字', priority='high')
+    q.update(answer='等待核验', next_action='取得合同原件')
+    archived = questions.create('已归档问题独占文字')
+    archived['archived'] = True
+    run['research_questions'] = [q, archived]
+    run['memo'] = questions.freeze_report(run, run['memo'])
+    q['next_action'] = '取得合同原件并核验签字'
+    for render in (markdown, printable):
+        current = render(run)
+        audit = render(run, audit=True)
+        assert '报告正文保留原版本' in current
+        assert '取得合同原件并核验签字' in current
+        assert '已归档问题独占文字' not in current
+        assert '已归档问题独占文字' in audit

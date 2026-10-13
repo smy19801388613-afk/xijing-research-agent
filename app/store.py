@@ -64,7 +64,8 @@ def update_run(run_id,change):
 def new_conversation(run_id=None):
     if run_id: get_run(run_id)
     value={"id":uuid.uuid4().hex[:16],"run_id":run_id,"title":"新的研究对话","state":"idle",
-           "created_at":now(),"updated_at":now(),"messages":[],"steps":[],"model_calls":[]}
+           "created_at":now(),"updated_at":now(),"messages":[],"steps":[],"model_calls":[],
+           "turn_contexts":{},"persistent_constraints":{}}
     with connection() as c:
         c.execute("INSERT INTO conversations(id,updated,payload) VALUES (?,?,?)",(value["id"],value["updated_at"],json.dumps(value,ensure_ascii=False)))
     return value
@@ -90,7 +91,8 @@ def update_conversation(cid,change):
         c.execute("UPDATE conversations SET updated=?,payload=? WHERE id=?",(value["updated_at"],json.dumps(value,ensure_ascii=False,allow_nan=False),cid))
     return value
 
-def begin_turn(cid,text,profile_id,data_source):
+def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None):
+    from .turn_constraints import resolve_turn_policy
     with connection() as c:
         c.execute("BEGIN IMMEDIATE")
         row=c.execute("SELECT payload FROM conversations WHERE id=? AND NOT EXISTS (SELECT 1 FROM trash WHERE kind='conversation' AND trash.id=conversations.id)",(cid,)).fetchone()
@@ -99,7 +101,33 @@ def begin_turn(cid,text,profile_id,data_source):
         if value["state"]=="running": raise ValueError("请等待当前回复完成，或先停止")
         active=c.execute("SELECT payload FROM conversations").fetchall()
         if sum(json.loads(r[0])["state"]=="running" for r in active)>=2: raise ValueError("已有两个 Agent 正在运行，请等待完成")
+        previous = next((m for m in reversed(value['messages']) if m.get('role')=='assistant'), None)
+        # The button and an exact continuation request use the same explicit contract.
+        if not resume_from_turn_id and text.strip().rstrip('。.!！') in ('继续','继续未完成部分','继续查证','继续未完成的研究'):
+            if previous and previous.get('delivery',{}).get('can_resume'):
+                resume_from_turn_id = previous['turn_id']
+        inherited = None
+        prior_context = {}
+        if resume_from_turn_id:
+            if not previous or previous.get('turn_id')!=resume_from_turn_id or value.get('turn_id')!=resume_from_turn_id or not previous.get('delivery',{}).get('can_resume'):
+                raise ValueError('只能继续最近一轮尚未完成的研究，请刷新对话后再试')
+            prior_context = value.get('turn_contexts',{}).get(resume_from_turn_id,{})
+            if not prior_context or prior_context.get('run_id')!=value.get('run_id'):
+                raise ValueError('研究上下文已变化，请提出新的研究请求')
+            inherited = prior_context.get('rules',{})
+        policy = resolve_turn_policy(value,text,inherited)
         tid=uuid.uuid4().hex[:12]
+        run_row = c.execute('SELECT payload FROM runs WHERE id=?',(value.get('run_id'),)).fetchone() if value.get('run_id') else None
+        run = json.loads(run_row[0]) if run_row else {}
+        task_ids = list(prior_context.get('task_turn_ids',[])) + [tid]
+        context = {'task_turn_id':prior_context.get('task_turn_id',tid),'task_turn_ids':task_ids,
+            'original_request':prior_context.get('original_request',text),'user_text':text,
+            'resume_from_turn_id':resume_from_turn_id,'run_id':value.get('run_id'),
+            'report_revision_before':prior_context.get('report_revision_before',run.get('report_revision')),
+            'rules':policy['rules'],'required_artifacts':prior_context.get('required_artifacts',[])}
+        value.setdefault('turn_contexts',{})[tid]=context
+        value['effective_constraints']=policy
+        value['persistent_constraints']=policy['persistent_rules']
         value.update(state="running",turn_id=tid,profile_id=profile_id,data_source=data_source,updated_at=now())
         if not value["messages"]: value["title"]=text[:35]
         value["messages"].append({"id":uuid.uuid4().hex[:12],"role":"user","content":text,"time":now(),"turn_id":tid})

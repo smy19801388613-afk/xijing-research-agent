@@ -186,9 +186,88 @@ def read_material(identity):
     return meta,rows
 
 
-def apply_materials(run):
-    from decimal import Decimal
+def material_row(row, year, as_of, meta):
+    """One deterministic eligibility rule for preflight and execution."""
     from datetime import date
+    from decimal import Decimal
+    from .finance import METRICS, number
+    if row.get('metric') not in METRICS:
+        return None, '不属于本次支持的核心财务指标', False
+    try: row_year=int(row.get('year',0))
+    except (ValueError,TypeError): return None, '年度无效', False
+    if row_year not in (year,year-1): return None, '不在本次研究的两个年度内', False
+    announced=row.get('announced_date') or meta.get('announced_date')
+    if not announced: return None, '缺少公告日期，不能证明截止日内已知', False
+    try: announced=date.fromisoformat(str(announced)).isoformat()
+    except ValueError: return None, '公告日期格式无效', False
+    if announced>as_of: return None, '公告日期晚于研究截止日', False
+    value=number(row.get('value'));unit=row.get('unit')
+    if value is None or not value.is_finite() or unit not in ('元','千元','万元') or row.get('currency')!='CNY' or row.get('scope')!='consolidated' or row.get('period_type')!='annual':
+        return None, '缺少有效数值、单位、币种或年度合并口径', True
+    return {'year':row_year,'announced_date':announced,'value':str(value*Decimal({'元':1,'千元':1000,'万元':10000}[unit]))}, '', False
+
+
+def preflight(request):
+    """Inspect selected material and configuration without any network request."""
+    from datetime import date
+    from . import connections
+    errors=[];warnings=[];selected=[]
+    if not POLICY['enabled']: errors.append('请先启动独立比赛工作区')
+    for identity in request.get('material_ids',[]):
+        item={'id':identity,'kind':'structured','filename':identity,'status':'excluded','accepted_rows':0,'excluded_rows':0,'issues':[]}
+        try:
+            meta,rows=read_material(identity);item['filename']=meta['filename']
+            if meta['ticker']!=request['ticker'] or meta['year']!=request['year']:
+                item['reason']='材料公司或年度与当前任务不匹配';errors.append(item['filename']+'：'+item['reason'])
+            else:
+                for n,row in enumerate(rows,1):
+                    usable,reason,fatal=material_row(row,request['year'],request['as_of'],meta)
+                    if usable: item['accepted_rows']+=1
+                    else:
+                        item['excluded_rows']+=1
+                        if len(item['issues'])<30: item['issues'].append({'row':n,'reason':reason})
+                        if fatal: errors.append(f"{meta['filename']} 第{n}行：{reason}")
+                item['status']='partial' if item['accepted_rows'] and item['excluded_rows'] else 'accepted' if item['accepted_rows'] else 'excluded'
+                item['reason']=f"采用 {item['accepted_rows']} 行，排除 {item['excluded_rows']} 行"
+                if item['excluded_rows']: warnings.append(item['filename']+'：'+item['reason'])
+        except (ValueError,KeyError,OSError):
+            item['reason']='材料不可读或内容已变化，请重新导入';errors.append(item['filename']+'：'+item['reason'])
+        selected.append(item)
+    if request.get('document_id'):
+        identity=request['document_id'];item={'id':identity,'kind':'pdf','filename':identity,'status':'excluded'}
+        try:
+            doc=store.get_document(identity);item['filename']=doc['title'];day=doc.get('announced_date')
+            if doc['ticker']!=request['ticker'] or doc['year']!=request['year']:
+                item['reason']='PDF公司或年度与当前任务不匹配';errors.append(item['reason'])
+            elif day and date.fromisoformat(day).isoformat()>request['as_of']:
+                item['reason']='PDF公告日期晚于研究截止日';errors.append(item['reason'])
+            else:
+                raw=read_bytes(doc['path'])
+                if doc.get('sha256') and hashlib.sha256(raw).hexdigest()!=doc['sha256']: raise ValueError('PDF已变化')
+                item['status']='accepted' if day else 'partial'
+                item['reason']='已接入PDF，可按页查阅' if day else '公告日期未知，仅作待核查材料'
+                if not day: warnings.append(item['reason'])
+        except (ValueError,KeyError,OSError): item['reason']='PDF不可读或内容已变化';errors.append(item['reason'])
+        selected.append(item)
+    if not selected: errors.append('至少选择一份PDF或结构化材料')
+    elif not any(m['status'] in ('accepted','partial') for m in selected): errors.append('没有可用于本次研究的材料')
+    model={'requested':bool(request.get('use_model')),'configured':False,'allowed':False,'name':'','reason':'未启用模型，仅核对材料','connection_verified':False}
+    if model['requested']:
+        try:
+            profile=connections.resolve_model(request.get('model_profile'))
+            model['name']=profile.get('name') or profile.get('model','')
+            model['configured']=bool(profile.get('model') and (profile.get('key') or profile.get('provider')=='ollama'))
+            model['allowed']=not POLICY['enabled'] or origin(profile['base']) in POLICY['model_origins']
+            model['reason']='已配置且许可；未发起连通性测试' if model['configured'] and model['allowed'] else '请配置可用模型并许可其接口来源，或取消使用模型'
+        except (ValueError,KeyError,OSError): model['reason']='模型配置不可用，请检查连接设置'
+        if not model['configured'] or not model['allowed']: errors.append(model['reason'])
+    return {'ready':not errors,'errors':list(dict.fromkeys(errors)),'warnings':list(dict.fromkeys(warnings)),
+        'materials':selected,'model':model,'network':{'controlled':POLICY['enabled'],'model_allowed':model['allowed'],
+        'retrieval_allowed':not POLICY['enabled'] or bool(POLICY['retrieval_origins'])},
+        'as_of':request['as_of'],'ticker':request['ticker'],'year':request['year']}
+
+
+def apply_materials(run):
     from .finance import METRICS, number
     for identity in run['request'].get('material_ids',[]):
         meta,rows=read_material(identity)
@@ -197,14 +276,12 @@ def apply_materials(run):
         for n,row in enumerate(rows,1):
             metric=row.get('metric')
             if metric not in METRICS: continue
-            year=int(row.get('year',0));value=number(row.get('value'));unit=row.get('unit')
-            announced=row.get('announced_date') or meta.get('announced_date')
-            if year not in (run['request']['year'],run['request']['year']-1): continue
-            if not announced or date.fromisoformat(announced).isoformat()>run['request']['as_of']:
-                run['gaps'].append({'code':f'material-date-{identity}-{n}','message':'结构化材料缺公告日或晚于截止日，该行未并入财务事实'});continue
-            if value is None or unit not in ('元','千元','万元') or row.get('currency')!='CNY' or row.get('scope')!='consolidated' or row.get('period_type')!='annual':
-                raise ValueError(f'材料第{n}行缺少有效数值、单位、币种或年度合并口径')
-            value*=Decimal({'元':1,'千元':1000,'万元':10000}[unit]);eid=f'material-{identity}-row-{n}';fid=f'{metric}-{year}'
+            prepared,reason,fatal=material_row(row,run['request']['year'],run['request']['as_of'],meta)
+            if fatal: raise ValueError(f'材料第{n}行{reason}')
+            if not prepared:
+                run['gaps'].append({'code':f'material-date-{identity}-{n}','message':f'{meta["filename"]} 第{n}行未采用：{reason}'});continue
+            year=prepared['year'];announced=prepared['announced_date'];value=number(prepared['value'])
+            eid=f'material-{identity}-row-{n}';fid=f'{metric}-{year}'
             run['evidence'].append({'id':eid,'kind':'material','title':meta['filename'],'material_id':identity,'sha256':meta['sha256'],
                 'announced_date':announced,'retrieved_at':meta['created_at'],'locator':f'结构化材料第{n}行','quote':json.dumps(row,ensure_ascii=False)})
             old=next((f for f in run['facts'] if f['id']==fid),None)
@@ -214,7 +291,7 @@ def apply_materials(run):
                 if number(old['value'])!=value: old['status']='conflict'
             else:
                 run['facts'].append({'id':fid,'metric':metric,'label':METRICS[metric]['label'],'year':year,'value':str(value),
-                    'original_value':str(row['value']),'original_unit':unit,'currency':'CNY','scope':'consolidated','period_type':'annual',
+                    'original_value':str(row['value']),'original_unit':row['unit'],'currency':'CNY','scope':'consolidated','period_type':'annual',
                     'announced_date':announced,'evidence_ids':[eid],'status':'document_only','missing_reason':None})
 
 
@@ -230,7 +307,8 @@ def submission_bundle(run):
         items={name:z.read(name) for name in z.namelist()}
     for identity in run['request'].get('material_ids',[]):
         meta,_=read_material(identity);items['materials/'+identity+Path(meta['path']).suffix]=read_bytes(meta['path'])
-        items['materials/'+identity+'.json']=json.dumps({k:v for k,v in meta.items() if k!='path'},ensure_ascii=False,indent=2).encode()
+        items['materials/'+identity+'.meta.json']=json.dumps({k:v for k,v in meta.items() if k!='path'},ensure_ascii=False,indent=2).encode()
+    items['competition/material-selection.json']=json.dumps(run.get('material_preflight') or {},ensure_ascii=False,indent=2).encode()
     if POLICY['enabled'] and (store.DATA/'competition-audit.sqlite3').exists():
         with sqlite3.connect(store.DATA/'competition-audit.sqlite3') as c:
             # Isolated workspace audit includes imports/network work for this workspace.
