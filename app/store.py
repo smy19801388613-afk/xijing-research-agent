@@ -2,8 +2,57 @@
 import json
 import sqlite3
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
+from functools import wraps
 from datetime import datetime, timezone
 from .config import DATA,VERSION
+
+class ExecutionStopped(BaseException):
+    """An obsolete/cancelled worker must not be converted into a tool failure."""
+
+_execution = ContextVar('research_execution', default=None)
+
+
+def _check_execution(c):
+    owner = _execution.get()
+    if not owner: return
+    if owner['kind'] == 'conversation':
+        row = c.execute('SELECT payload,cancel FROM conversations WHERE id=?',(owner['id'],)).fetchone()
+        value = json.loads(row[0]) if row else {}
+        if not row or row[1] or value.get('turn_id') != owner['turn_id'] or value.get('state') != 'running':
+            raise ExecutionStopped()
+    else:
+        row = c.execute('SELECT state,cancel FROM runs WHERE id=?',(owner['id'],)).fetchone()
+        if not row or row[1] or row[0] not in ('queued','running'):
+            raise ExecutionStopped()
+
+
+def check_execution():
+    if _execution.get():
+        with connection() as c: _check_execution(c)
+
+
+@contextmanager
+def execution_scope(kind, identity, turn_id=None):
+    token = _execution.set({'kind':kind,'id':identity,'turn_id':turn_id})
+    try:
+        check_execution()
+        yield
+    finally:
+        _execution.reset(token)
+
+
+def conversation_execution(fn):
+    @wraps(fn)
+    def wrapped(cid, turn_id=None):
+        tid = turn_id or get_conversation(cid).get('turn_id')
+        try:
+            with execution_scope('conversation',cid,tid): return fn(cid,tid)
+        except ExecutionStopped:
+            # The API has already finalized cancellation, or a new turn owns the chat.
+            return
+    return wrapped
 
 def now():
     return datetime.now(timezone.utc).isoformat()
@@ -16,6 +65,7 @@ def connection():
     c.execute("CREATE TABLE IF NOT EXISTS documents (id TEXT PRIMARY KEY, payload TEXT)")
     c.execute("CREATE TABLE IF NOT EXISTS conversations (id TEXT PRIMARY KEY, updated TEXT, payload TEXT, cancel INTEGER DEFAULT 0)")
     c.execute("CREATE TABLE IF NOT EXISTS trash (kind TEXT, id TEXT, deleted TEXT, batch TEXT, PRIMARY KEY(kind,id))")
+    c.execute("CREATE TABLE IF NOT EXISTS workers (kind TEXT, target TEXT, turn_id TEXT, pid INTEGER, birth TEXT, PRIMARY KEY(kind,target,turn_id))")
     return c
 
 def create_run(request, parent=None):
@@ -28,6 +78,10 @@ def create_run(request, parent=None):
     run["research_questions"]=[create_question(request.get("question","当前研究还有哪些证据缺口？"))]
     with connection() as c:
         c.execute("BEGIN IMMEDIATE")
+        _check_execution(c)
+        owner = _execution.get()
+        if owner and owner['kind']=='conversation':
+            run['execution_owner']={'conversation_id':owner['id'],'turn_id':owner['turn_id']}
         active = c.execute("SELECT COUNT(*) FROM runs WHERE state IN ('queued','running')").fetchone()[0]
         if active >= 2:
             raise ValueError("已有两项研究正在进行，请等待完成或取消其中一项")
@@ -44,15 +98,18 @@ def get_run(run_id):
     return json.loads(row[0])
 
 def save_run(run):
-    from . import competition
-    competition.audit("run_snapshot",run_id=run["id"],snapshot=run)
     run["updated_at"] = now()
     with connection() as c:
+        c.execute('BEGIN IMMEDIATE')
+        _check_execution(c)
         c.execute("UPDATE runs SET state=?,payload=? WHERE id=?", (run["state"],json.dumps(run,ensure_ascii=False,allow_nan=False),run["id"]))
+    from . import competition
+    competition.audit("run_snapshot",run_id=run["id"],snapshot=run)
 
 def update_run(run_id,change):
     with connection() as c:
         c.execute("BEGIN IMMEDIATE")
+        _check_execution(c)
         row=c.execute("SELECT payload FROM runs WHERE id=? AND NOT EXISTS (SELECT 1 FROM trash WHERE kind='run' AND trash.id=runs.id)",(run_id,)).fetchone()
         if not row: raise KeyError(run_id)
         run=json.loads(row[0]);change(run);run["updated_at"]=now()
@@ -85,6 +142,7 @@ def conversations(run_id=None):
 def update_conversation(cid,change):
     with connection() as c:
         c.execute("BEGIN IMMEDIATE")
+        _check_execution(c)
         row=c.execute("SELECT payload FROM conversations WHERE id=? AND NOT EXISTS (SELECT 1 FROM trash WHERE kind='conversation' AND trash.id=conversations.id)",(cid,)).fetchone()
         if not row: raise KeyError(cid)
         value=json.loads(row[0]);change(value);value["updated_at"]=now()
@@ -128,19 +186,71 @@ def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None):
         value.setdefault('turn_contexts',{})[tid]=context
         value['effective_constraints']=policy
         value['persistent_constraints']=policy['persistent_rules']
-        value.update(state="running",turn_id=tid,profile_id=profile_id,data_source=data_source,updated_at=now())
+        value.pop('termination',None)
+        value.update(state="running",turn_id=tid,profile_id=profile_id,data_source=data_source,updated_at=now(),cancel_requested=False)
         if not value["messages"]: value["title"]=text[:35]
         value["messages"].append({"id":uuid.uuid4().hex[:12],"role":"user","content":text,"time":now(),"turn_id":tid})
         c.execute("UPDATE conversations SET cancel=0,updated=?,payload=? WHERE id=?",(value["updated_at"],json.dumps(value,ensure_ascii=False),cid))
     return value
 
-def cancel_conversation(cid):
-    get_conversation(cid)
-    with connection() as c: c.execute("UPDATE conversations SET cancel=1 WHERE id=?",(cid,))
+def cancel_conversation(cid,turn_id=None):
+    """Finalize this turn atomically before killing its waiting worker.
+
+    Only a run created by this exact turn is owned by the cancellation. Merely
+    discussing an existing run must not stop another chat's work on that run.
+    """
+    with connection() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute('SELECT payload FROM conversations WHERE id=?',(cid,)).fetchone()
+        if not row: raise KeyError(cid)
+        value=json.loads(row[0])
+        if turn_id and value.get('turn_id') != turn_id: return value
+        if value.get('state') != 'running':
+            # Also support cooperative callers operating without an agent turn.
+            c.execute('UPDATE conversations SET cancel=1 WHERE id=?',(cid,))
+            return value
+        tid=value['turn_id']
+        for rid,payload in c.execute('SELECT id,payload FROM runs WHERE state IN (\'queued\',\'running\')').fetchall():
+            run=json.loads(payload)
+            if run.get('execution_owner')=={'conversation_id':cid,'turn_id':tid}:
+                _mark_run_cancelled(c,run)
+        run_row=c.execute('SELECT payload FROM runs WHERE id=?',(value.get('run_id'),)).fetchone()
+        run=json.loads(run_row[0]) if run_row else None
+        value.update(state='cancelled',cancel_requested=True,updated_at=now())
+        for step in value['steps']:
+            if step.get('turn_id')==tid and step.get('state')=='running':
+                step.update(state='cancelled',finished_at=now())
+        from .agent import delivery_state,progress_message
+        observed=value.get('turn_coverage',{}).get(tid)
+        delivery=delivery_state(value,run,'cancelled',observed)
+        value['messages'].append({'id':uuid.uuid4().hex[:12],'role':'assistant','turn_id':tid,
+            'content':'已停止本轮执行，已经完成的工具结果仍然保留。\n\n'+progress_message(delivery),
+            'time':now(),'error':True,'incomplete':True,'delivery':delivery})
+        c.execute('UPDATE conversations SET cancel=1,updated=?,payload=? WHERE id=?',
+                  (value['updated_at'],json.dumps(value,ensure_ascii=False),cid))
+    return value
 
 def conversation_cancelled(cid):
     with connection() as c: row=c.execute("SELECT cancel FROM conversations WHERE id=?",(cid,)).fetchone()
     return bool(row and row[0])
+
+
+def record_termination(cid,turn_id,result):
+    with connection() as c:
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute('SELECT payload FROM conversations WHERE id=?',(cid,)).fetchone()
+        if not row: raise KeyError(cid)
+        value=json.loads(row[0])
+        # A late OS result must not overwrite any field of a newer turn.
+        if value.get('turn_id')!=turn_id or value.get('state')!='cancelled': return value
+        previous=value.get('termination',{})
+        if previous==result or (result.get('status')=='not_registered' and previous.get('status') in ('stopped','already_exited')):
+            return value
+        value['termination']=result
+        value['updated_at']=now()
+        c.execute('UPDATE conversations SET updated=?,payload=? WHERE id=?',
+                  (value['updated_at'],json.dumps(value,ensure_ascii=False),cid))
+    return value
 
 def list_runs():
     with connection() as c:
@@ -153,12 +263,25 @@ def cancelled(run_id):
     return bool(row and row[0])
 
 def cancel_run(run_id):
-    get_run(run_id)
     with connection() as c:
-        c.execute("UPDATE runs SET cancel=1 WHERE id=?",(run_id,))
+        c.execute('BEGIN IMMEDIATE')
+        row=c.execute('SELECT payload FROM runs WHERE id=?',(run_id,)).fetchone()
+        if not row: raise KeyError(run_id)
+        run=json.loads(row[0])
+        if run['state'] in ('queued','running'): _mark_run_cancelled(c,run)
+    return run
+
+
+def _mark_run_cancelled(c,run):
+    run.update(state='cancelled',updated_at=now())
+    run['events'].append({'time':now(),'label':'研究已取消','detail':'保留已经完成的研究结果','kind':'warning'})
+    c.execute('UPDATE runs SET cancel=1,state=?,payload=? WHERE id=?',
+              ('cancelled',json.dumps(run,ensure_ascii=False),run['id']))
 
 def put_document(doc):
     with connection() as c:
+        c.execute('BEGIN IMMEDIATE')
+        _check_execution(c)
         c.execute("INSERT OR REPLACE INTO documents VALUES (?,?)",(doc["id"],json.dumps(doc,ensure_ascii=False)))
 
 def get_document(doc_id):

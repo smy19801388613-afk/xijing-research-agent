@@ -63,14 +63,24 @@ function Step({step,onOpen,onAdopt,busy,accepted}:any){
 }
 export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,prompt,autoSendPrompt=false,onPromptConsumed}:any){
   const [chat,setChat]=useState<any>(null),[chats,setChats]=useState<any[]>([]),[draft,setDraft]=useState(''),[profile,setProfile]=useState(config.active_model||''),[sending,setSending]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true);
-  const [attached,setAttached]=useState<any[]>([]),[historyNotice,setHistoryNotice]=useState(''),[showMaterials,setShowMaterials]=useState(false);
+  const [attached,setAttached]=useState<any[]>([]),[historyNotice,setHistoryNotice]=useState(''),[showMaterials,setShowMaterials]=useState(false),[stopping,setStopping]=useState(false);
   const chatRef=useRef<any>(null);
+  const stoppingRef=useRef<{id:string,turnId:string}|null>(null);
   const consumedPrompt=useRef(''),sendingRef=useRef(false);
   const bottom=useRef<HTMLDivElement>(null),textarea=useRef<HTMLTextAreaElement>(null),callback=useRef(onRunUpdated),openCallback=useRef(onOpen);
   callback.current=onRunUpdated;openCallback.current=onOpen;
   const active=chat?.state==='running';
+  const terminationPending=chat?.termination?.status==='pending'&&chat.termination.retryable&&chat.termination.turn_id===chat.turn_id;
   const selectionKey='research-conversation:'+(run?.id||'free');
-  function remember(c:any){chatRef.current=c;localStorage.setItem(selectionKey,c.id);setChat(c)}
+  function remember(c:any){if(stoppingRef.current&&(stoppingRef.current.id!==c.id||stoppingRef.current.turnId!==c.turn_id||c.state!=='running')){stoppingRef.current=null;setStopping(false)}chatRef.current=c;localStorage.setItem(selectionKey,c.id);setChat(c)}
+  function acceptSnapshot(c:any,id:string,turnId:string){
+    const current=chatRef.current;
+    if(!current||current.id!==id||current.turn_id!==turnId||c.id!==id)return false;
+    if(c.turn_id!==turnId&&(!c.updated_at||c.updated_at<=current.updated_at))return false;
+    // A queued event from an older request must not revive a stopped turn.
+    if((c.turn_id===turnId&&current.state!=='running'&&c.state==='running')||(current.updated_at&&c.updated_at&&c.updated_at<current.updated_at))return false;
+    remember(c);setError(value=>c.state!=='running'||value.startsWith('暂时无法获取任务状态')||value.startsWith('状态消息读取失败')?'':value);return true;
+  }
   async function ensureChat(){if(chatRef.current)return chatRef.current;const c=await post('/conversations',{run_id:run?.id||null});remember(c);await list();return c}
   async function documentsChanged(){const c=chatRef.current;if(!c)return;remember(await api('/conversations/'+c.id));setAttached(await api('/conversations/'+c.id+'/documents'));if(c.run_id)await callback.current(c.run_id)}
   useEffect(()=>{let alive=true;setAttached([]);if(chat?.id)api('/conversations/'+chat.id+'/documents').then(rows=>alive&&setAttached(rows)).catch(e=>alive&&setError(e.message));return()=>{alive=false}},[chat?.id,chat?.updated_at]);
@@ -82,11 +92,25 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
   useEffect(()=>{bottom.current?.scrollIntoView({behavior:'smooth',block:'end'})},[chat?.messages.length,chat?.steps.length,active]);
   useEffect(()=>{
     if(!chat?.id||!active)return;
-    const events=new EventSource('/api/conversations/'+chat.id+'/events');let done=false;
-    events.onmessage=e=>{const c=JSON.parse(e.data);chatRef.current=c;setChat(c);if(c.state!=='running'){done=true;events.close();list().catch(()=>{});if(c.run_id)callback.current(c.run_id)}};
-    events.onerror=()=>{events.close();if(!done){api('/conversations/'+chat.id).then(c=>{setChat(c);if(c.state==='running')setError('状态连接中断，任务仍在后台执行。刷新页面可恢复。');else if(c.run_id)callback.current(c.run_id)}).catch(e=>setError(e.message))}};
-    return()=>events.close();
-  },[chat?.id,active]);
+    const id=chat.id,turnId=chat.turn_id,events=new EventSource('/api/conversations/'+id+'/events');let disposed=false,checking=false;
+    function update(c:any){if(disposed||!acceptSnapshot(c,id,turnId))return;if(c.state!=='running'){events.close();list().catch(()=>{});if(c.run_id)callback.current(c.run_id)}}
+    events.onmessage=e=>{try{update(JSON.parse(e.data))}catch{setError('状态消息读取失败，正在重新获取任务状态。')}};
+    events.onerror=()=>{if(disposed||checking)return;checking=true;api('/conversations/'+id).then(c=>{if(!disposed)update(c)}).catch(()=>{if(!disposed&&chatRef.current?.id===id&&chatRef.current?.turn_id===turnId)setError('暂时无法获取任务状态，正在重新连接。')}).finally(()=>{checking=false})};
+    return()=>{disposed=true;events.close()};
+  },[chat?.id,chat?.turn_id,active]);
+  async function stop(){
+    const current=chatRef.current,canRetry=current?.termination?.status==='pending'&&current.termination.retryable&&current.termination.turn_id===current.turn_id;
+    if(!current||(current.state!=='running'&&!canRetry)||stoppingRef.current)return;
+    const target={id:current.id,turnId:current.turn_id};stoppingRef.current=target;setStopping(true);setError('');
+    const controller=new AbortController(),timeout=window.setTimeout(()=>controller.abort(),15000);
+    try{
+      const response=await api('/conversations/'+target.id+'/cancel',{method:'POST',body:JSON.stringify({turn_id:target.turnId}),signal:controller.signal});
+      const next=response.id?response:await api('/conversations/'+target.id,{signal:controller.signal});
+      if(acceptSnapshot(next,target.id,target.turnId)&&next.state!=='running'){list().catch(()=>{});if(next.run_id)callback.current(next.run_id)}
+    }catch(e:any){
+      if(stoppingRef.current===target){stoppingRef.current=null;setStopping(false);setError(e.name==='AbortError'?'停止请求尚未确认，请重试；任务状态仍会自动更新。':'停止请求未能确认：'+e.message+'。可以重试。')}
+    }finally{window.clearTimeout(timeout)}
+  }
   async function newChat(unbound=false){setError('');try{const c=await post('/conversations',{run_id:unbound?null:run?.id||null});remember(c);setDraft('');await list()}catch(e:any){setError(e.message)}}
   async function select(id:string){if(!id)return;setError('');try{remember(await api('/conversations/'+id))}catch(e:any){setError(e.message)}}
   async function send(e?:any,content=draft,resumeFrom?:string){e?.preventDefault();if(!content.trim()||sendingRef.current||active)return;sendingRef.current=true;setSending(true);setError('');try{
@@ -122,12 +146,13 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
           {!!steps.length&&<details className="tool-timeline" open={active&&i===messages.length-1}><summary><ActivityIcon running={active&&i===messages.length-1}/><span>{active&&i===messages.length-1?'正在研究':'研究过程'} · {steps.length} 个步骤</span>{steps.some((s:any)=>s.result?.artifact==='proposal')&&<span className="badge">含估值方案</span>}<ChevronDown size={14}/></summary><div className="tool-timeline-items">{steps.map((s:any)=><Step key={s.id} step={s} onOpen={openArtifact} busy={active||sending} accepted={chat?.proposals?.find((p:any)=>p.id===s.result?.proposal?.id)?.state==='accepted'} onAdopt={(p:any)=>send(undefined,'我采用估值方案 '+p.id+'（'+p.method_name+'），请按展示的参数计算并保存。')}/>)}</div></details>}
           {m.role==='assistant'&&<Coverage value={m.coverage||turnCoverage(chat,m.turn_id)}/>}
           {m.role==='assistant'&&<Delivery value={m.delivery} canResume={i===messages.length-1} disabled={active||sending||!profile} onResume={(id:string)=>send(undefined,'继续未完成部分',id)}/>}
-          {m.role==='user'&&i===messages.length-1&&active&&<div className="thinking-status"><LoaderCircle size={14} className="spin"/>{steps.at(-1)?.state==='running'?'正在执行工具…':'正在结合你的问题和工具结果继续研究…'}</div>}
+          {m.role==='user'&&i===messages.length-1&&active&&<div className="thinking-status" role="status"><LoaderCircle size={14} className="spin"/>{stopping?'正在停止，等待服务器确认…':steps.at(-1)?.state==='running'?'正在执行工具…':'正在结合你的问题和工具结果继续研究…'}</div>}
         </div>})}<div ref={bottom}/>
       </div>
-      <form className="chat-composer" onSubmit={send}>{error&&<p className="form-error" role="alert">{error}</p>}<textarea ref={textarea} aria-label="与研序讨论研究" placeholder="提出问题，或继续追问你的投资判断…" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send()}}} maxLength={8000} disabled={sending}/>
+      {terminationPending&&<div className="termination-notice" role="status"><span>本轮已停止写入，后台连接尚未确认关闭，可重试结束连接。</span><button type="button" className="secondary" disabled={stopping||sending} aria-busy={stopping} onClick={stop}>{stopping?<><LoaderCircle size={13} className="spin"/>正在确认…</>:'重试结束连接'}</button></div>}
+      <form className={'chat-composer'+(active?' chat-is-active':'')} onSubmit={send}>{error&&<p className="form-error" role="alert">{error}</p>}<textarea ref={textarea} aria-label="与研序讨论研究" placeholder="提出问题，或继续追问你的投资判断…" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send()}}} maxLength={8000} disabled={sending}/>
         <ResearchDocuments run={linkedRun} ensureChat={ensureChat} onDone={documentsChanged} disabled={active||sending}/>
-        <div className="composer-bottom"><span>Enter 发送 · Shift + Enter 换行</span>{active?<button type="button" className="secondary" onClick={()=>post('/conversations/'+chat.id+'/cancel').catch(e=>setError(e.message))}><Square size={13}/>停止</button>:<button className="send-button" aria-label="发送研究消息" disabled={sending||!draft.trim()||!profile}>{sending?<LoaderCircle className="spin" size={17}/>:<ArrowUp size={18}/>}</button>}</div></form>
+        <div className="composer-bottom"><span>Enter 发送 · Shift + Enter 换行</span>{active?<button type="button" className="secondary" disabled={stopping} aria-busy={stopping} onClick={stop}>{stopping?<LoaderCircle size={13} className="spin"/>:<Square size={13}/>} {stopping?'正在停止…':'停止'}</button>:<button className="send-button" aria-label="发送研究消息" disabled={sending||!draft.trim()||!profile}>{sending?<LoaderCircle className="spin" size={17}/>:<ArrowUp size={18}/>}</button>}</div></form>
     </section><aside className="chat-companion"><h3>资料与成果</h3><button className="deep-research-action" onClick={()=>send(undefined,deepResearchPrompt)} disabled={!linkedRun||active||sending||!profile}><Sparkles size={18}/><span>深入研究并保存报告</span><ChevronRight size={14}/></button><button onClick={()=>onOpen('overview')} disabled={!linkedRun}><BookOpen size={18}/><span>公司研究<small>{linkedRun?linkedRun.facts.length+' 项事实 · 第 '+(linkedRun.report_revision||1)+' 版':'尚未建立研究'}</small></span><ChevronRight size={14}/></button><button onClick={()=>onOpen('model')} disabled={!linkedRun}><SlidersHorizontal size={18}/><span>估值与假设<small>{linkedRun?.valuation_history?.length||0} 份情景</small></span><ChevronRight size={14}/></button><DocumentLinks documents={attached}/>{!!webSources.length&&<div className="chat-web-sources"><h4>网络来源 · 共 {webSources.length} 个</h4><WebReferences sources={webSources.slice(0,8)}/>{webSources.length>8&&<details><summary>查看其余 {webSources.length-8} 个来源</summary><WebReferences sources={webSources.slice(8)}/></details>}</div>}</aside></div>
   </div>
 }

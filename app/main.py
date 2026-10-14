@@ -4,21 +4,19 @@ import html
 import io
 import json
 import re
-import subprocess
-import sys
 import uuid
 import zipfile
 from datetime import date
 from pathlib import Path
 from contextlib import asynccontextmanager
 from urllib.parse import urlparse
-from fastapi import FastAPI,HTTPException,UploadFile,File,Form,Request
+from fastapi import FastAPI,HTTPException,UploadFile,File,Form,Request,Body
 from fastapi.responses import FileResponse,Response,StreamingResponse,JSONResponse
 from fastapi.staticfiles import StaticFiles
 import pdfplumber
 import pypdfium2
 from .config import ROOT,DATA,VERSION,settings
-from . import store,documents,connections,securities,valuation,disclosures,competition
+from . import store,documents,connections,securities,valuation,disclosures,competition,runtime
 from .schemas import RunRequest,ScenarioRequest,ReviewRequest,ProfileRequest,PreferencesRequest,ValuationRequest,ConversationRequest,TurnRequest,ReportRequest
 from .providers import ProviderError,model_json,list_models
 from .finance import scenario,audit_text
@@ -60,12 +58,7 @@ async def provider_error(request,error):
     return JSONResponse({"detail":str(error)},status_code=502)
 
 def launch(run):
-    folder=DATA/"runs"/run["id"]
-    folder.mkdir(parents=True,exist_ok=True)
-    with (folder/"worker.log").open("ab") as log:
-        process=subprocess.Popen([sys.executable,"-u","-m","app.worker",run["id"]],cwd=ROOT,stdout=log,stderr=log,
-            creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
-    (folder/"worker.pid").write_text(str(process.pid),encoding="ascii")
+    runtime.launch('run',run['id'])
     return run
 
 @app.get("/api/health")
@@ -177,12 +170,8 @@ def conversation_turn(cid:str,request:TurnRequest):
         raise ValueError("请在连接设置中配置当前模型")
     config=connections.load()
     chat=store.begin_turn(cid,request.message.strip(),profile["id"],config["data_source"],resume_from_turn_id=request.resume_from_turn_id)
-    folder=DATA/"conversations"/cid;folder.mkdir(parents=True,exist_ok=True)
     try:
-        with (folder/"worker.log").open("ab") as log:
-            process=subprocess.Popen([sys.executable,"-u","-m","app.agent_worker",cid],cwd=ROOT,stdout=log,stderr=log,
-                                     creationflags=getattr(subprocess,"CREATE_NO_WINDOW",0))
-        (folder/"worker.pid").write_text(str(process.pid),encoding="ascii")
+        runtime.launch('conversation',cid,chat['turn_id'])
     except Exception:
         from .agent import finish_error
         finish_error(cid,chat["turn_id"],"无法启动本地 Agent 进程，请重试","failed")
@@ -190,13 +179,14 @@ def conversation_turn(cid:str,request:TurnRequest):
     return chat
 
 @app.post("/api/conversations/{cid}/cancel")
-def conversation_cancel(cid:str):
-    store.cancel_conversation(cid)
-    chat=store.get_conversation(cid)
-    if chat.get("run_id"):
-        run=store.get_run(chat["run_id"])
-        if run["state"] in ("queued","running"): store.cancel_run(run["id"])
-    return {"status":"requested","detail":"停止请求已记录，当前外部请求返回后生效"}
+def conversation_cancel(cid:str,payload:dict|None=Body(default=None)):
+    tid=(payload or {}).get('turn_id')
+    chat=store.cancel_conversation(cid,tid)
+    if chat.get('state')=='cancelled' and (not tid or chat.get('turn_id')==tid):
+        target_turn=chat.get('turn_id','')
+        result=runtime.stop_conversation(cid,target_turn)
+        chat=store.record_termination(cid,target_turn,result)
+    return chat
 
 @app.get("/api/conversations/{cid}/events")
 async def conversation_events(cid:str):
@@ -228,12 +218,19 @@ def retry(run_id:str):
 
 @app.post("/api/runs/{run_id}/cancel")
 def cancel(run_id:str):
-    run=store.get_run(run_id)
-    if run["state"] in ("queued","running"):
-        store.cancel_run(run_id)
-        run["state"]="cancelled"
-        store.save_run(run)
-    return {"status":"cancelled","detail":"取消请求已记录；正在进行的外部调用会在返回后停止"}
+    run=store.cancel_run(run_id)
+    result=None
+    if run['state']=='cancelled':
+        result=runtime.stop('run',run_id)
+        owner=run.get('execution_owner')
+        if owner:
+            chat=store.cancel_conversation(owner['conversation_id'],owner['turn_id'])
+            if chat.get('turn_id')==owner['turn_id'] and chat.get('state')=='cancelled':
+                owned_result=runtime.stop_conversation(owner['conversation_id'],owner['turn_id'])
+                store.record_termination(owner['conversation_id'],owner['turn_id'],owned_result)
+                if owned_result['retryable']: result=owned_result
+    return {"status":run['state'],"detail":"研究已停止，已经完成的结果仍保留" if run['state']=='cancelled' else '研究已结束',
+            "termination":result}
 
 @app.get("/api/runs/{run_id}/events")
 async def events(run_id:str):

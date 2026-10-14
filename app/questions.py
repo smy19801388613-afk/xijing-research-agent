@@ -117,7 +117,7 @@ def assess(run,item,origin='model',reassess=False):
     if not current: raise ValueError('问题ID不存在，请先建立研究问题')
     if current.get('archived') and not reassess: raise ValueError('请先恢复已归档问题，再更新答案')
     status=item.get('status','partial')
-    if status not in LABELS: raise ValueError('问题状态无效')
+    if status not in LABELS: raise ValueError('问题状态无效：'+str(current['id'])+'，仅允许 pending、partial、supported、conflict、unverifiable；不充分时用partial，不要使用章节的inference或gap')
     answer=text(item.get('answer',''),'答案',8000,False)
     counter=text(item.get('counter_evidence',''),'反方说明',3000,False)
     gaps=item.get('gaps',[])
@@ -132,7 +132,7 @@ def assess(run,item,origin='model',reassess=False):
         if not source: raise ValueError('引用来源不存在或晚于截止日')
         quote=text(binding.get('quote'),'原文摘录',2500)
         if len(normal(quote))<4 or normal(quote) not in normal(source.get('text','')):
-            raise ValueError('引用摘录未在实际取得的原文中匹配')
+            raise ValueError('引用摘录未在实际取得的原文中匹配：问题 '+current['id']+'，来源 '+str(sid)+'。请从该来源复制短的连续原文，不改写、不拼接；无法找到时删除该绑定并保留缺口')
         relation=binding.get('relation','support')
         if relation not in ('support','counter'): raise ValueError('关系必须为support或counter')
         reason=text(binding.get('reason'),'证据与问题的关系',1500)

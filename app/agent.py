@@ -265,7 +265,11 @@ def tool(chat,name,args,model_input_run=None):
             req.data_source="documents"
             req.material_ids=[m["id"] for m in competition.materials() if m["ticker"]==req.ticker and m["year"]==req.year]
         run=store.create_run(req.model_dump(mode="json"))
-        store.update_conversation(chat["id"],lambda c:c.update(run_id=run["id"]))
+        def bind_run(c):
+            c['run_id']=run['id']
+            context=c.get('turn_contexts',{}).get(chat.get('turn_id'))
+            if context is not None: context['run_id']=run['id']
+        store.update_conversation(chat["id"],bind_run)
         research.execute(run["id"])
         run=store.get_run(run["id"])
         return {"run_id":run["id"],"company":run["company"],"state":run["state"],"fact_count":len(run["facts"]),"gaps":run["gaps"],"artifact":"research"}
@@ -461,7 +465,8 @@ def progress_message(delivery):
 
 
 @competition.traced("agent", "conversation_id")
-def execute(cid):
+@store.conversation_execution
+def execute(cid,expected_turn_id=None):
     start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];unit_retries=0;state_retries=0;denied=0
     user_text=task_request(chat)
     rules=effective_rules(chat)
@@ -618,6 +623,8 @@ def execute(cid):
     except research.Cancelled:
         finish_error(cid,turn_id,"已停止本轮执行。已经完成的工具结果仍然保留。","cancelled")
     except ProviderError as error:
+        if error.diagnostics:
+            store.update_conversation(cid,lambda c:c['model_calls'].append(error.diagnostics|{'turn_id':turn_id}))
         if denied:
             finish_restricted(cid,turn_id,str(error),saved_sources)
         else:
@@ -650,6 +657,7 @@ def finish_error(cid,turn_id,message,state):
     chat=store.get_conversation(cid)
     run=store.get_run(chat['run_id']) if chat.get('run_id') else None
     def change(c):
+        if c.get('turn_id') != turn_id or c.get('state') != 'running': return
         c["state"]=state
         for step in c["steps"]:
             if step["turn_id"]==turn_id and step["state"]=="running": step.update(state=state,finished_at=store.now())
