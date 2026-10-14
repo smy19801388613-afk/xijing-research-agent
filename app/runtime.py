@@ -139,7 +139,8 @@ def stop_conversation(cid,turn_id):
     with store.connection() as c:
         runs=[(rid,json.loads(payload)) for rid,payload in c.execute('SELECT id,payload FROM runs').fetchall()]
     for rid,run in runs:
-        if run.get('execution_owner')=={'conversation_id':cid,'turn_id':turn_id} and run.get('state')=='cancelled':
+        if (run.get('execution_owner')=={'conversation_id':cid,'turn_id':turn_id}
+                and (run.get('state')=='cancelled' or run.get('stop_reason')=='time_limit')):
             results.append(stop('run',rid))
     result=next((r for r in results if r['retryable']),None) or next((r for r in results if r['status']=='stopped'),None) or results[0]
     return {**result,'turn_id':turn_id}

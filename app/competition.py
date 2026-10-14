@@ -67,7 +67,7 @@ def clean(value):
     if isinstance(value,dict):
         from .providers import _USAGE_COUNTERS, _USAGE_DETAILS
         def token_metric(key,item):
-            if key in _USAGE_COUNTERS | {'max_tokens','max_completion_tokens','requested_output_tokens'}:
+            if key in _USAGE_COUNTERS | {'max_tokens','max_completion_tokens','requested_output_tokens','generation_tokens'}:
                 return isinstance(item,int) and not isinstance(item,bool) and item>=0
             return key in _USAGE_DETAILS and isinstance(item,dict)
         return {str(k):('[REDACTED]' if _secret.search(str(k)) and not token_metric(str(k),v) else clean(v)) for k,v in value.items()}

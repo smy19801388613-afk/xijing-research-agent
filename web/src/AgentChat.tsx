@@ -4,6 +4,7 @@ import {api,post} from './api';
 import {ValuationResult,AssumptionChips} from './ValuationLab';
 import ResearchDocuments,{DocumentLinks} from './ResearchDocuments';
 import ResearchText from './ResearchText';
+import ExecutionBudget,{defaultBudget,normalizeBudget} from './ExecutionBudget';
 const toolNames:any={plan_research_questions:'建立研究问题',update_research_question:'保存问题证据',search_company:'查找公司',start_research:'建立财务底稿',fetch_annual_report:'获取公开年报',attach_document:'接入研究材料',read_document:'查阅 PDF 原文',search_documents:'检索披露原文',web_search:'联网搜索',search_web:'联网搜索',read_webpage:'阅读网页',read_public_pdf:'查阅公开公告PDF',read_web_page:'阅读网页',read_web:'阅读网页',build_investment_memo:'撰写深度研究',refine_investment_memo:'依据原文修订报告',valuation_options:'比较估值方法',calculate_valuation:'计算估值情景',propose_valuation:'提出估值方案',calculate_proposal:'计算选定方案',revise_report:'修订研究报告'};
 const deepResearchPrompt='请围绕当前公司开展深度买方研究：联网搜索行业、竞争格局、最新经营进展与风险，阅读关键原文并结合财务底稿、年报，检验投资论点和反证，讨论估值适用条件、催化剂与判断失效条件，最后生成并保存完整研究备忘录。明确资料日期、来源、推断和未解决的问题；缺失数据不要编造。';
 function sourceKey(url:string){try{const u=new URL(url);u.protocol='https:';u.hash='';Array.from(u.searchParams.keys()).filter(k=>k.startsWith('utm_')).forEach(k=>u.searchParams.delete(k));return u.toString().replace(/\/$/,'')}catch{return url}}
@@ -61,9 +62,10 @@ function Step({step,onOpen,onAdopt,busy,accepted}:any){
     {open&&result&&<details className="tool-raw"><summary>查看工具原始结果</summary><pre className="tool-result">{JSON.stringify(result,null,2)}</pre></details>}
   </div>
 }
-export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,prompt,autoSendPrompt=false,onPromptConsumed}:any){
+export default function AgentChat({run,config,onConfigChange,onRunUpdated,onOpen,onNewResearch,prompt,autoSendPrompt=false,onPromptConsumed}:any){
   const [chat,setChat]=useState<any>(null),[chats,setChats]=useState<any[]>([]),[draft,setDraft]=useState(''),[profile,setProfile]=useState(config.active_model||''),[sending,setSending]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true);
   const [attached,setAttached]=useState<any[]>([]),[historyNotice,setHistoryNotice]=useState(''),[showMaterials,setShowMaterials]=useState(false),[stopping,setStopping]=useState(false);
+  const [budget,setBudget]=useState(()=>defaultBudget(config));
   const chatRef=useRef<any>(null);
   const stoppingRef=useRef<{id:string,turnId:string}|null>(null);
   const consumedPrompt=useRef(''),sendingRef=useRef(false);
@@ -86,6 +88,7 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
   useEffect(()=>{let alive=true;setAttached([]);if(chat?.id)api('/conversations/'+chat.id+'/documents').then(rows=>alive&&setAttached(rows)).catch(e=>alive&&setError(e.message));return()=>{alive=false}},[chat?.id,chat?.updated_at]);
   async function removeChat(){if(!chat||active)return;setError('');try{await api('/conversations/'+chat.id,{method:'DELETE'});localStorage.removeItem(selectionKey);chatRef.current=null;setChat(null);setAttached([]);const rows=await list();if(rows.length)remember(await api('/conversations/'+rows[0].id));setHistoryNotice('对话已移入回收站，可以恢复。')}catch(e:any){setError(e.message)}}
   useEffect(()=>{setProfile(config.active_model||'')},[config.active_model]);
+  useEffect(()=>{setBudget(defaultBudget(config))},[JSON.stringify(config.execution_budget)]);
   async function list(){const v=await api('/conversations'+(run?.id?'?run_id='+run.id:''));setChats(v);return v}
   useEffect(()=>{let alive=true;api('/conversations'+(run?.id?'?run_id='+run.id:'')).then(async rows=>{if(!alive)return;setChats(rows);const saved=localStorage.getItem(selectionKey);const selected=rows.find((r:any)=>r.id===saved)||rows[0];if(selected){const c=await api('/conversations/'+selected.id);if(alive)remember(c)}}).catch(e=>alive&&setError(e.message)).finally(()=>alive&&setLoading(false));return()=>{alive=false}},[run?.id]);
   useEffect(()=>{if(!prompt){consumedPrompt.current='';return}if(loading||consumedPrompt.current===prompt)return;setDraft(prompt);textarea.current?.focus();if(autoSendPrompt&&active)return;consumedPrompt.current=prompt;onPromptConsumed?.();if(autoSendPrompt){if(!profile){setError('请先选择模型连接，再发送更新报告请求。');return}send(undefined,prompt)}},[prompt,autoSendPrompt,loading,active]);
@@ -115,7 +118,7 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
   async function select(id:string){if(!id)return;setError('');try{remember(await api('/conversations/'+id))}catch(e:any){setError(e.message)}}
   async function send(e?:any,content=draft,resumeFrom?:string){e?.preventDefault();if(!content.trim()||sendingRef.current||active)return;sendingRef.current=true;setSending(true);setError('');try{
     const c=await ensureChat();
-    const next=await post('/conversations/'+c.id+'/messages',{message:content,profile_id:profile||null,...(resumeFrom?{resume_from_turn_id:resumeFrom}:{})});
+    const next=await post('/conversations/'+c.id+'/messages',{message:content,profile_id:profile||null,execution_budget:{...budget},...(resumeFrom?{resume_from_turn_id:resumeFrom}:{})});
     remember(next);if(!resumeFrom)setDraft('');await list();
   }catch(e:any){setError(e.message)}finally{sendingRef.current=false;setSending(false)}}
   async function openArtifact(tab:string){if(chat?.run_id)await callback.current(chat.run_id);openCallback.current(tab)}
@@ -150,6 +153,7 @@ export default function AgentChat({run,config,onRunUpdated,onOpen,onNewResearch,
         </div>})}<div ref={bottom}/>
       </div>
       {terminationPending&&<div className="termination-notice" role="status"><span>本轮已停止写入，后台连接尚未确认关闭，可重试结束连接。</span><button type="button" className="secondary" disabled={stopping||sending} aria-busy={stopping} onClick={stop}>{stopping?<><LoaderCircle size={13} className="spin"/>正在确认…</>:'重试结束连接'}</button></div>}
+      <ExecutionBudget config={config} value={active?normalizeBudget(chat.execution_budget||chat.turn_contexts?.[chat.turn_id]?.execution_budget||budget,config):budget} onChange={setBudget} onDefaultsSaved={onConfigChange} disabled={active||sending} running={active}/>
       <form className={'chat-composer'+(active?' chat-is-active':'')} onSubmit={send}>{error&&<p className="form-error" role="alert">{error}</p>}<textarea ref={textarea} aria-label="与研序讨论研究" placeholder="提出问题，或继续追问你的投资判断…" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send()}}} maxLength={8000} disabled={sending}/>
         <ResearchDocuments run={linkedRun} ensureChat={ensureChat} onDone={documentsChanged} disabled={active||sending}/>
         <div className="composer-bottom"><span>Enter 发送 · Shift + Enter 换行</span>{active?<button type="button" className="secondary" disabled={stopping} aria-busy={stopping} onClick={stop}>{stopping?<LoaderCircle size={13} className="spin"/>:<Square size={13}/>} {stopping?'正在停止…':'停止'}</button>:<button className="send-button" aria-label="发送研究消息" disabled={sending||!draft.trim()||!profile}>{sending?<LoaderCircle className="spin" size={17}/>:<ArrowUp size={18}/>}</button>}</div></form>

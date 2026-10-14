@@ -1,8 +1,11 @@
 import {useEffect,useState} from 'react';
 import {Plus,PlugZap,Check,Save,KeyRound,Database,LoaderCircle} from 'lucide-react';
 import {api,post} from './api';
+import ExecutionBudget,{defaultBudget} from './ExecutionBudget';
 export default function ConnectionSettings({config,onChange}:any){
   const [draft,setDraft]=useState<any>(null),[token,setToken]=useState(''),[source,setSource]=useState(config.data_source||'tushare'),[busy,setBusy]=useState(''),[message,setMessage]=useState(''),[error,setError]=useState(''),[models,setModels]=useState<string[]>([]);
+  const [budget,setBudget]=useState(()=>defaultBudget(config));
+  useEffect(()=>{setBudget(defaultBudget(config))},[JSON.stringify(config.execution_budget)]);
   useEffect(()=>{if(!draft&&config.profiles?.length)edit(config.profiles.find((p:any)=>p.id===config.active_model)||config.profiles[0])},[config]);
   function edit(p:any){setDraft({...p,api_key:'',clear_key:false,activate:false});setModels([]);setError('');setMessage('')}
   function create(){const p=config.presets[0];edit({...p,id:'model-'+Date.now(),name:'新的模型连接',model:p.model,json_mode:true,activate:false})}
@@ -29,6 +32,7 @@ export default function ConnectionSettings({config,onChange}:any){
       <button className="text-link" disabled={!!busy||!saved||config.active_model===draft.id} onClick={()=>action('activate',async()=>{onChange(await post('/connections/preferences',{active_model:draft.id}));setMessage('已设为默认模型连接')})}>设为默认</button></div>
       <p className="small-muted form-help">测试和模型列表使用已保存的连接；修改后请先保存。连接测试会产生一次很小的模型调用。</p>
     </section></div>
+    <ExecutionBudget config={config} value={budget} onChange={setBudget} onDefaultsSaved={onChange} disabled={!!busy} settings/>
     <section className="panel data-connection"><header><Database size={19}/><h2>财务数据来源</h2></header><div className="source-choices">{config.data_sources?.map((p:any)=><label key={p.id} className={source===p.id?'selected':''}><input type="radio" name="source" value={p.id} checked={source===p.id} onChange={()=>setSource(p.id)}/><span><strong>{p.name}</strong><small>{p.description}</small></span></label>)}</div>
       <label>Tushare Token <span className="small-muted">{config.tushare_configured?'· 已配置，留空保留':''}</span><input type="password" autoComplete="new-password" value={token} placeholder="使用自己的 Token；公开财务或文件模式不需要 Token" onChange={e=>setToken(e.target.value)}/></label>
       <div className="button-row"><button className="primary" disabled={!!busy} onClick={()=>action('data',async()=>{onChange(await post('/connections/preferences',{data_source:source,tushare_token:token}));setToken('');setMessage('数据连接已保存，下次新研究使用该来源')})}><Save size={15}/>保存数据连接</button><button className="text-link" disabled={!!busy||!config.tushare_configured} onClick={()=>action('clear-token',async()=>{onChange(await post('/connections/preferences',{clear_tushare:true}));setToken('');setMessage('已清除 Tushare Token')})}>清除 Token</button></div>

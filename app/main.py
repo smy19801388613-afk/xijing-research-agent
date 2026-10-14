@@ -169,7 +169,9 @@ def conversation_turn(cid:str,request:TurnRequest):
     if not profile["model"] or (not profile["key"] and profile["provider"]!="ollama"):
         raise ValueError("请在连接设置中配置当前模型")
     config=connections.load()
-    chat=store.begin_turn(cid,request.message.strip(),profile["id"],config["data_source"],resume_from_turn_id=request.resume_from_turn_id)
+    budget=request.execution_budget if request.execution_budget is not None else config.get('execution_budget')
+    chat=store.begin_turn(cid,request.message.strip(),profile["id"],config["data_source"],resume_from_turn_id=request.resume_from_turn_id,
+                          execution_budget=budget)
     try:
         runtime.launch('conversation',cid,chat['turn_id'])
     except Exception:

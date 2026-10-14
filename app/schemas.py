@@ -1,6 +1,16 @@
 from datetime import date
 from typing import Literal
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+from .execution_budget import normalize as normalize_execution_budget
+
+
+class ExecutionBudgetRequest(BaseModel):
+    execution_budget: dict[str, int] | None = None
+
+    @field_validator('execution_budget', mode='before')
+    @classmethod
+    def check_execution_budget(cls, value):
+        return None if value is None else normalize_execution_budget(value)
 
 class RunRequest(BaseModel):
     ticker: str = Field(default="000333.SZ", pattern=r"^\d{6}\.(SZ|SH|BJ)$")
@@ -44,7 +54,7 @@ class ProfileRequest(BaseModel):
     clear_key: bool = False
     activate: bool = False
 
-class PreferencesRequest(BaseModel):
+class PreferencesRequest(ExecutionBudgetRequest):
     active_model: str | None = None
     data_source: Literal["tushare","eastmoney","documents"] | None = None
     tushare_token: str = Field(default="",max_length=4000)
@@ -57,7 +67,7 @@ class ValuationRequest(BaseModel):
 class ConversationRequest(BaseModel):
     run_id: str | None = None
 
-class TurnRequest(BaseModel):
+class TurnRequest(ExecutionBudgetRequest):
     message: str = Field(min_length=1,max_length=8000)
     profile_id: str | None = None
     resume_from_turn_id: str | None = Field(default=None,max_length=80)

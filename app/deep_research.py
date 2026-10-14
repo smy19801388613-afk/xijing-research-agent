@@ -14,7 +14,7 @@ from .providers import model_json, ProviderError
 from .config import VERSION
 from .fact_state import verification, assert_claims, fact_view
 from .evidence_policy import eligibility
-from . import questions
+from . import questions, execution_budget
 from .report_state import valuation_snapshot, link_report_valuations
 
 SECTION_TITLES = {
@@ -331,6 +331,8 @@ sections中必须有7个独立对象，分别为 {key:business,...}、{key:indus
 
 def build(run_id, question, chat=None, progress=None):
     started = time.monotonic()
+    deadline=execution_budget.deadline()
+    if deadline is None: deadline=started+600
     run = store.get_run(run_id)
     chat = chat or {"run_id": run_id}
     allow_question_writes=question_writes_allowed(chat)
@@ -349,7 +351,7 @@ def build(run_id, question, chat=None, progress=None):
         from .research import Cancelled
         if store.cancelled(run_id) or (chat.get("id") and store.conversation_cancelled(chat["id"])):
             raise Cancelled()
-        if time.monotonic() - started > 600:
+        if time.monotonic() >= deadline:
             raise ProviderError("深度研究达到时间预算，已保留检索来源；旧报告未被覆盖")
         if progress and label:
             progress(label)
@@ -358,7 +360,7 @@ def build(run_id, question, chat=None, progress=None):
         if not allow_question_writes: system+='\n'+QUESTION_READ_ONLY
         try:
             value, meta = model_json(system, payload, tokens, profile_id=chat.get("profile_id") or req.get("model_profile"),
-                                     reasoning=reasoning,cancel_check=update,deadline=started+600)
+                                     reasoning=reasoning,cancel_check=update,deadline=deadline)
         except ProviderError as error:
             calls.append(error.diagnostics or {'status':'failed','error':str(error)})
             record('failure',{'message':str(error),'at':store.now()})
@@ -539,6 +541,8 @@ def refine(run_id, question, chat, progress=None):
     """Edit against already read material without rerunning discovery for every edit."""
     from .research import Cancelled
     started=time.monotonic()
+    deadline=execution_budget.deadline()
+    if deadline is None: deadline=started+600
     run=store.get_run(run_id)
     allow_question_writes=question_writes_allowed(chat)
     refs=reference_catalog(run)
@@ -563,7 +567,7 @@ def refine(run_id, question, chat, progress=None):
         check()
         try:
             value,meta=model_json(system,payload,7800,profile_id=chat.get('profile_id'),reasoning=True,
-                                  cancel_check=check,deadline=started+600)
+                                  cancel_check=check,deadline=deadline)
         except ProviderError as error:
             calls.append(error.diagnostics or {'status':'failed','error':str(error)})
             record(failure={'message':str(error),'at':store.now()})

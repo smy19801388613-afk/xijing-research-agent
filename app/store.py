@@ -5,7 +5,7 @@ import uuid
 from contextlib import contextmanager
 from contextvars import ContextVar
 from functools import wraps
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from .config import DATA,VERSION
 
 class ExecutionStopped(BaseException):
@@ -149,8 +149,10 @@ def update_conversation(cid,change):
         c.execute("UPDATE conversations SET updated=?,payload=? WHERE id=?",(value["updated_at"],json.dumps(value,ensure_ascii=False,allow_nan=False),cid))
     return value
 
-def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None):
+def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None,execution_budget=None):
     from .turn_constraints import resolve_turn_policy
+    from .execution_budget import normalize
+    budget=normalize(execution_budget)
     with connection() as c:
         c.execute("BEGIN IMMEDIATE")
         row=c.execute("SELECT payload FROM conversations WHERE id=? AND NOT EXISTS (SELECT 1 FROM trash WHERE kind='conversation' AND trash.id=conversations.id)",(cid,)).fetchone()
@@ -175,19 +177,36 @@ def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None):
             inherited = prior_context.get('rules',{})
         policy = resolve_turn_policy(value,text,inherited)
         tid=uuid.uuid4().hex[:12]
+        started=datetime.now(timezone.utc)
+        started_at=started.isoformat()
+        deadline_at=(started+timedelta(minutes=budget['time_minutes'])).isoformat()
         run_row = c.execute('SELECT payload FROM runs WHERE id=?',(value.get('run_id'),)).fetchone() if value.get('run_id') else None
         run = json.loads(run_row[0]) if run_row else {}
+        if resume_from_turn_id and run:
+            owner=run.get('execution_owner') or {}
+            prior_turn_ids=set(prior_context.get('task_turn_ids',[])) | {resume_from_turn_id}
+            stopped=run.get('state')=='cancelled' or (run.get('state')=='failed' and run.get('stop_reason')=='time_limit')
+            if stopped and owner.get('conversation_id')==cid and owner.get('turn_id') in prior_turn_ids:
+                # Permit the new turn to use saved materials. Keep the terminal
+                # run state and payload: old run/conversation workers remain
+                # unable to write under their original execution scopes.
+                c.execute('UPDATE runs SET cancel=0 WHERE id=?',(run['id'],))
         task_ids = list(prior_context.get('task_turn_ids',[])) + [tid]
         context = {'task_turn_id':prior_context.get('task_turn_id',tid),'task_turn_ids':task_ids,
             'original_request':prior_context.get('original_request',text),'user_text':text,
             'resume_from_turn_id':resume_from_turn_id,'run_id':value.get('run_id'),
             'report_revision_before':prior_context.get('report_revision_before',run.get('report_revision')),
-            'rules':policy['rules'],'required_artifacts':prior_context.get('required_artifacts',[])}
+            'rules':policy['rules'],'required_artifacts':prior_context.get('required_artifacts',[]),
+            'execution_budget':dict(budget),'started_at':started_at,'deadline_at':deadline_at}
         value.setdefault('turn_contexts',{})[tid]=context
         value['effective_constraints']=policy
         value['persistent_constraints']=policy['persistent_rules']
         value.pop('termination',None)
-        value.update(state="running",turn_id=tid,profile_id=profile_id,data_source=data_source,updated_at=now(),cancel_requested=False)
+        value.pop('stop_reason',None)
+        value.pop('budget_exhausted',None)
+        value.update(state="running",turn_id=tid,profile_id=profile_id,data_source=data_source,updated_at=now(),cancel_requested=False,
+                     execution_budget=dict(budget),execution_deadline_at=deadline_at,
+                     budget_usage={'decisions_used':0,'max_decisions':budget['max_decisions']})
         if not value["messages"]: value["title"]=text[:35]
         value["messages"].append({"id":uuid.uuid4().hex[:12],"role":"user","content":text,"time":now(),"turn_id":tid})
         c.execute("UPDATE conversations SET cancel=0,updated=?,payload=? WHERE id=?",(value["updated_at"],json.dumps(value,ensure_ascii=False),cid))

@@ -5,7 +5,8 @@ import hashlib
 import re
 import time
 import uuid
-from datetime import date
+from datetime import date, datetime, timezone
+from functools import wraps
 from decimal import Decimal
 from . import store,securities,valuation,research,documents,disclosures,deep_research,web_research
 from .config import DATA
@@ -16,7 +17,7 @@ from .tool_capabilities import TOOLS, LABELS
 from .evidence_policy import source_fingerprint
 from .report_state import report_valuation_status
 from .fact_state import claims, enrich
-from . import questions
+from . import questions, execution_budget
 
 SYSTEM="""你是研序，一位与用户合作的A股投研助手。使用中文。主动讨论研究思路、方法适用性、反证和还需取得的资料。
 你可以决定调用哪些工具，多次观察结果后再继续，也可以直接回答或追问。不能假装已经执行工具。
@@ -464,13 +465,37 @@ def progress_message(delivery):
     return '\n\n'.join(lines)
 
 
+def with_turn_budget(fn):
+    @wraps(fn)
+    def wrapped(cid, expected_turn_id=None):
+        chat=store.get_conversation(cid)
+        ctx=chat.get('turn_contexts',{}).get(chat.get('turn_id'),{})
+        budget=execution_budget.normalize(ctx.get('execution_budget') or chat.get('execution_budget'))
+        stamp=ctx.get('deadline_at') or chat.get('execution_deadline_at')
+        remaining=(datetime.fromisoformat(stamp)-datetime.now(timezone.utc)).total_seconds() if stamp else budget['time_minutes']*60
+        with execution_budget.scope(budget,deadline_at=time.monotonic()+remaining):
+            return fn(cid,expected_turn_id)
+    return wrapped
+
+
+def stop_at_deadline(cid,turn_id):
+    from .budget_timeout import expire_conversation
+    stopped=expire_conversation(cid,turn_id)
+    if stopped.get('state')!='running': raise store.ExecutionStopped()
+    # Legacy/test records may not have a persisted absolute deadline.
+    raise ProviderError('本轮达到执行时间预算，已保留完成的结果')
+
+
 @competition.traced("agent", "conversation_id")
 @store.conversation_execution
+@with_turn_budget
 def execute(cid,expected_turn_id=None):
     start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];unit_retries=0;state_retries=0;denied=0
     user_text=task_request(chat)
     rules=effective_rules(chat)
     ctx=chat.get('turn_contexts',{}).get(turn_id,{})
+    budget=execution_budget.current()
+    max_decisions=budget['max_decisions']
     results=[{'tool':s['tool'],'result':s['result'],'reused_from_step_id':s.get('id')}
              for s in task_steps(chat) if ctx.get('resume_from_turn_id') and s.get('state')=='completed'
              and isinstance(s.get('result'),dict) and not s['result'].get('error') and not s.get('reused_from_step_id')]
@@ -487,17 +512,18 @@ def execute(cid,expected_turn_id=None):
     if ctx:
         store.update_conversation(cid,lambda c:c['turn_contexts'][turn_id].update(required_artifacts=sorted(required)))
     try:
-        for decision_index in range(8):
+        for decision_index in range(max_decisions):
             if store.conversation_cancelled(cid): raise research.Cancelled()
-            if time.monotonic()-start>900: raise ProviderError("本轮达到执行时间预算，已保留完成的结果")
+            if time.monotonic()>=execution_budget.deadline(): stop_at_deadline(cid,turn_id)
+            store.update_conversation(cid,lambda c:c.update(budget_usage={'decisions_used':decision_index+1,'max_decisions':max_decisions}))
             chat=store.get_conversation(cid)
             feedback_note=results[-1].get('validation_feedback','') if results else ''
-            budget_note="\n本轮已到最后一次决策，只能 respond：总结已经取得的材料、原文页码与未核实项，不再调用工具。" if decision_index==7 else ""
+            budget_note="\n本轮已到最后一次决策，只能 respond：总结已经取得的材料、原文页码与未核实项，不再调用工具。" if decision_index==max_decisions-1 else ""
             policy_note="\n本轮用户禁止使用任何工具，只能 respond。" if rules['no_tools'] else (
                 "\n本轮禁止的联网、报告或估值动作不得提出；只用许可的已有材料答复，无法核实时说明缺口。" if
                 any(rules[k] for k in ('no_network','no_report','no_calculation','no_valuation')) else "")
             decision_run=store.get_run(chat['run_id']) if chat.get('run_id') else None
-            decision,meta=model_json(SYSTEM+policy_note+'\n'+feedback_note+budget_note,{"today":date.today().isoformat(),"context":context(chat,decision_run),"decisions_remaining":8-decision_index,
+            decision,meta=model_json(SYSTEM+policy_note+'\n'+feedback_note+budget_note,{"today":date.today().isoformat(),"context":context(chat,decision_run),"decisions_remaining":max_decisions-decision_index,"execution_budget":budget,
                 "valuation_methods":valuation.CATALOG,"competition_policy":competition.POLICY,
                 "proposed_scenarios":chat.get("proposals",[])[-4:],
                 "conversation":[{"role":m["role"],"content":m["content"]} for m in chat["messages"][-24:]],
@@ -518,7 +544,7 @@ def execute(cid,expected_turn_id=None):
             if decision.get('action')=='respond':
                 observed=coverage([s for s in chat['steps'] if s['turn_id']==turn_id],user_text,saved_sources,str(decision.get('message','')),run=evidence_run,require_body=rules['require_body'])
                 # At most two bounded recovery reads, leaving a decision for the answer.
-                if observed['status']=='partial' and observed['body_attempts']<2 and decision_index<7 and not rules['no_network'] and not rules['no_tools']:
+                if observed['status']=='partial' and observed['body_attempts']<2 and decision_index<max_decisions-1 and not rules['no_network'] and not rules['no_tools']:
                     tried={canonical_url(s.get('arguments',{}).get('url','')) for s in chat['steps'] if s['turn_id']==turn_id and s['tool'] in ('read_webpage','read_web_page','read_public_pdf')}
                     source=next((s for s in observed['sources'] if canonical_url(s['url']) not in tried),None)
                     if source:
@@ -549,14 +575,14 @@ def execute(cid,expected_turn_id=None):
                 if not message: raise ProviderError("模型未返回有效回复")
                 state_issues=claims(message,current_run)
                 if state_issues:
-                    if state_retries<1 and decision_index<7:
+                    if state_retries<1 and decision_index<max_decisions-1:
                         state_retries+=1
                         results.append({'validation_feedback':'事实来源状态不得升级：'+'；'.join(i['message'] for i in state_issues)})
                         continue
                     message='本轮回答未通过事实来源状态校验，未采用原回答：\n\n'+'\n'.join(i['message'] for i in state_issues)+'\n\n财务值与工具记录仍保留，请依据实际来源状态继续研究。'
                 unit_issue=document_unit_feedback(message,results)
                 if unit_issue:
-                    if unit_retries<1 and decision_index<7:
+                    if unit_retries<1 and decision_index<max_decisions-1:
                         unit_retries+=1
                         results.append({'validation_feedback':'原文单位校验未通过。'+unit_issue+'请纠正回答，必要时检索并读取股份变动表。'})
                         continue
@@ -619,12 +645,16 @@ def execute(cid,expected_turn_id=None):
                 c.setdefault('turn_coverage',{})[turn_id]=coverage([s for s in c['steps'] if s['turn_id']==turn_id],user_text,saved_sources,run=evidence_run,require_body=rules['require_body'])
             store.update_conversation(cid,complete)
             results.append({"tool":name,"result":result})
-        raise ProviderError("本轮已达到 8 次模型决策上限，已完成的结果已保存；可继续提出下一步要求")
+        raise ProviderError(f"本轮已达到 {max_decisions} 次模型决策上限，已完成的结果已保存；可调整执行预算后继续未完成部分")
     except research.Cancelled:
         finish_error(cid,turn_id,"已停止本轮执行。已经完成的工具结果仍然保留。","cancelled")
     except ProviderError as error:
         if error.diagnostics:
             store.update_conversation(cid,lambda c:c['model_calls'].append(error.diagnostics|{'turn_id':turn_id}))
+        if time.monotonic()>=execution_budget.deadline():
+            from .budget_timeout import expire_conversation
+            stopped=expire_conversation(cid,turn_id)
+            if stopped.get('state')!='running': raise store.ExecutionStopped()
         if denied:
             finish_restricted(cid,turn_id,str(error),saved_sources)
         else:

@@ -7,6 +7,7 @@ import re
 import threading
 from urllib.parse import urlparse
 from .config import DATA,legacy_settings,VERSION
+from . import execution_budget
 
 LOCK=threading.RLock()
 PRESETS=[
@@ -50,10 +51,14 @@ def validate_base(base):
 
 def load():
     path=DATA/"connections.json"
-    if path.exists(): return json.loads(path.read_text(encoding="utf-8"))
+    if path.exists():
+        value=json.loads(path.read_text(encoding="utf-8"))
+        value['execution_budget']=execution_budget.normalize(value.get('execution_budget'))
+        return value
     legacy=legacy_settings()
     p=PRESETS[0]|{"id":"deepseek","name":"现有 DeepSeek","model":legacy["model"],"base":legacy["base"],"legacy_key":True,"json_mode":True}
-    return {"active_model":"deepseek","data_source":"tushare","tushare_legacy":True,"profiles":[p]}
+    return {"active_model":"deepseek","data_source":"tushare","tushare_legacy":True,"profiles":[p],
+            "execution_budget":execution_budget.normalize()}
 
 def save(value):
     DATA.mkdir(parents=True,exist_ok=True)
@@ -78,6 +83,9 @@ def public_settings():
     value=load();cfg=runtime_settings()
     profiles=[{k:v for k,v in p.items() if k not in ("secret","legacy_key")}|{"key_configured":bool(legacy_settings()["key"] if p.get("legacy_key") else p.get("secret"))} for p in value["profiles"]]
     return {"version":VERSION,"today":date.today().isoformat(),"active_model":value["active_model"],"data_source":value["data_source"],
+            "execution_budget":execution_budget.normalize(value.get('execution_budget')),
+            "execution_budget_defaults":dict(execution_budget.DEFAULTS),
+            "execution_budget_bounds":{key:dict(bounds) for key,bounds in execution_budget.BOUNDS.items()},
             "profiles":profiles,"presets":PRESETS,"data_sources":DATA_SOURCES,"tushare_configured":bool(cfg["token"]),
             "model_configured":bool(cfg["key"]) or cfg["provider"]=="ollama","model":cfg["model"],"model_host":urlparse(cfg["base"]).hostname,
             "secret_storage":"Windows 当前用户加密存储"}
@@ -105,6 +113,8 @@ def save_profile(data):
 def save_preferences(data):
     with LOCK:
         value=load()
+        if data.get('execution_budget') is not None:
+            value['execution_budget']=execution_budget.normalize(data['execution_budget'])
         if data.get("active_model") is not None:
             if data["active_model"] not in {p["id"] for p in value["profiles"]}: raise ValueError("模型连接不存在")
             value["active_model"]=data["active_model"]

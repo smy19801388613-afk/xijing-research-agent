@@ -74,7 +74,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
     deadline is an optional absolute time.monotonic() deadline.
     """
     from .connections import resolve_model, validate_base
-    from . import store
+    from . import store, execution_budget
     cfg = resolve_model(profile_id)
     if not cfg["key"] and cfg["provider"] != "ollama":
         raise ProviderError("当前模型连接尚未配置 API Key，请在连接设置中填写")
@@ -89,6 +89,17 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
     # surfaced, never followed by an unbounded parameter guessing/retry loop.
     second_limit = min(MAX_GENERATION_TOKENS, first_limit + first_limit // 2) if thinking else min(32768, first_limit * 2)
     second_limit = max(first_limit, second_limit)
+    budget=execution_budget.current()
+    if budget:
+        cap=budget['generation_tokens']
+        first_limit=min(first_limit,cap)
+        # The selected ceiling also bounds the recovery request. Ordinary short
+        # decisions can use less; a long reasoning draft may recover up to it.
+        second_limit=cap if reasoning else min(second_limit,cap)
+    shared_deadline=execution_budget.deadline()
+    if shared_deadline is not None:
+        deadline=min(deadline,shared_deadline) if deadline is not None else shared_deadline
+    answer_budget=min(max_tokens,first_limit)
     attempts = []
     actual_limit = first_limit
 
@@ -96,6 +107,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
         return {"model": cfg["model"], "provider": cfg["provider"], "connection_id": cfg["id"],
             "reasoning_enabled": thinking, "status": status,
             "requested_output_tokens": max_tokens, "actual_limit": actual_limit,
+            "execution_generation_cap": budget['generation_tokens'] if budget else None,
             "generation_limit_scope": "reasoning_and_answer" if thinking or cfg["provider"] == "openai" else "provider_completion",
             "elapsed_ms": int((time.monotonic() - started) * 1000),
             "attempt_count": len(attempts), "attempts": list(attempts),
@@ -124,7 +136,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
     message = {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
     prompt = system + "\nReturn a valid JSON object only, no markdown fences."
     if thinking:
-        prompt += f"\nKeep the final JSON answer within approximately {max_tokens} tokens. Preserve required fields, source IDs and uncertainty; avoid repeating source text."
+        prompt += f"\nKeep the final JSON answer within approximately {answer_budget} tokens. Preserve required fields, source IDs and uncertainty; avoid repeating source text."
 
     for index, actual_limit in enumerate((first_limit, second_limit), 1):
         check()
@@ -149,7 +161,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
         attempt = {"attempt": index, "actual_limit": actual_limit, "status": "requesting", "usage": {}}
         attempts.append(attempt)
         attempt_started = time.monotonic()
-        timeout = 300 if thinking else 80
+        timeout = 300 if reasoning else 80
         if deadline is not None: timeout = max(0.001, min(timeout, deadline - time.monotonic()))
         try:
             response = httpx.post(cfg["base"] + endpoint, headers=headers, json=body, timeout=timeout)
@@ -180,7 +192,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
                 competition.audit("model_attempt", diagnostics=attempt)
                 if index == 1:
                     continue
-                fail("模型两次生成仍达到输出或上下文上限，未采用不完整草稿；请减少单次研究问题或分段更新报告", "length_exhausted")
+                fail("模型两次生成仍达到输出或上下文上限，未采用不完整草稿；可调整生成额度、减少单次研究问题或分段更新报告", "length_exhausted")
             if not completed:
                 attempt["status"] = "interrupted"
                 fail("模型服务中断了本次生成，未采用不完整草稿；已有证据仍保留", "provider_interrupted")
@@ -200,6 +212,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
             fail(f"模型接口返回 HTTP {error.response.status_code}；请检查当前服务的密钥、模型名、接口协议和输出额度", "http_error")
         except httpx.TimeoutException:
             attempt.update(status="timeout", elapsed_ms=int((time.monotonic() - attempt_started) * 1000))
+            check()
             fail("模型响应超时，已保留已有证据；可缩小本次问题范围后继续", "timeout")
         except httpx.HTTPError:
             attempt.update(status="network_error", elapsed_ms=int((time.monotonic() - attempt_started) * 1000))

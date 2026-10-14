@@ -5,7 +5,7 @@ from dotenv import dotenv_values
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(os.environ.get("RESEARCH_DATA_DIR", ROOT / "var"))
 FIXTURES = ROOT / "examples"
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 
 def legacy_settings():
     # Read existing credentials locally; never copy them into the product or UI.
