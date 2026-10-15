@@ -23,13 +23,28 @@ function observedSources(steps:any[],message=''){
   return Array.from(sources.values()).sort((a,b)=>Number(b.read_status==='body_read')-Number(a.read_status==='body_read')||Number(b.cited)-Number(a.cited));
 }
 function turnCoverage(chat:any,turnId:string){
+  if(chat?.coverage_views?.[turnId])return chat.coverage_views[turnId];
   if(chat?.turn_coverage?.[turnId])return chat.turn_coverage[turnId];
   const steps=(chat?.steps||[]).filter((s:any)=>s.turn_id===turnId),text=(chat?.messages||[]).find((m:any)=>m.turn_id===turnId&&m.role==='user')?.content||'',sources=observedSources(steps);
   const body=sources.filter(s=>s.read_status==='body_read').length,required=text.split(/[。；，,、\n]/).some((c:string)=>/(?:打开|读取|阅读|查阅|核对).{0,10}(?:正文|原文|全文)/.test(c)&&!/(?:不|无需|别).{0,8}(?:打开|读取|阅读|查阅|核对)/.test(c)),pages=steps.filter((s:any)=>s.tool==='read_document'&&s.state==='completed').reduce((n:number,s:any)=>n+(s.result?.snippets?.filter((p:any)=>p.text?.trim()).length||0),0);
   const unknown=steps.some((s:any)=>s.tool==='build_investment_memo'&&!s.result?.observed_sources);
   return {search_calls:steps.filter((s:any)=>s.tool==='web_search'&&s.state==='completed').length,search_results:steps.filter((s:any)=>s.tool==='web_search').reduce((n:number,s:any)=>n+(s.result?.results?.length||0),0),body_sources:body,document_pages:pages,status:unknown?'unknown':required&&!body&&!pages?'partial':'observed',sources,reused_cited_sources:null};
 }
-function Coverage({value}:any){if(!value||!(value.search_calls||value.body_sources||value.document_pages||value.reused_cited_sources||['partial','unknown'].includes(value.status)))return null;if(value.status==='unknown')return <div className="turn-coverage">旧记录未保存完整的本轮来源覆盖，请展开研究过程与报告来源核对。</div>;return <div className={'turn-coverage '+value.status} role="status"><strong>{value.status==='partial'?'正文查证未完成':'本轮资料覆盖'}</strong><span>搜索 {value.search_calls} 次 · 结果 {value.search_results} 条 · 新增网络正文 {value.body_sources} 篇 · 本地读页 {value.document_pages}</span>{value.reused_cited_sources!=null&&<small>引用已有材料 {value.reused_cited_sources} 条（按实际链接统计）</small>}{value.status==='partial'&&<small>本轮未取得可用正文；摘要只作为线索，不能视为已完成正文核验。</small>}{value.question_coverage&&<small>研究问题：{value.question_coverage.counts.supported} / {value.question_coverage.total} 项有证据回答，语义判断待复核。</small>}{!!value.unread_sources&&<small>另有 {value.unread_sources} 个来源未取得正文{value.failed_sources?'，其中 '+value.failed_sources+' 个读取失败':''}。</small>}</div>}
+function Coverage({value}:any){
+  if(!value)return null;
+  const task=value.task_coverage||value,unknown=value.telemetry_incomplete||value.status==='unknown';
+  const active=value.search_calls||value.body_sources||value.document_pages||value.reused_cited_sources;
+  if(!active&&!task.search_calls&&!task.body_sources&&!task.telemetry_incomplete&&!['partial','unknown'].includes(value.status))return null;
+  const noNewRead=!value.body_sources&&!value.document_pages;
+  return <div className={'turn-coverage '+value.status} role="status">
+    <strong>{unknown?'资料活动记录不完整':'本轮检索与阅读'}</strong>
+    {unknown?<span>旧版深度研究漏记了内部检索，无法还原精确次数；零条记录不代表没有执行。</span>:<span>搜索 {value.search_calls} 次 · 结果 {value.search_results} 条 · 网络原文 {value.body_sources} 篇 · 本地读页 {value.document_pages}</span>}
+    {value.task_coverage&&(value.task_turn_count>1||task.telemetry_incomplete)&&<small>{task.telemetry_incomplete?'任务累计：旧版记录不完整，无法还原完整检索与阅读次数。':`任务累计（含续查）：搜索 ${task.search_calls} 次 · 网络原文 ${task.body_sources} 篇 · 本地读页 ${task.document_pages}`}</small>}
+    {noNewRead&&!unknown&&<small>{value.reused_cited_sources?`本轮引用已有材料 ${value.reused_cited_sources} 条，未重新读取。`:value.saved_body_sources?`本轮未新增原文查阅，当前资料库已有 ${value.saved_body_sources} 条可读来源；仍需核对与问题的对应关系。`:'本轮尚未取得可用原文，搜索摘要只能作为线索。'}</small>}
+    {value.question_coverage&&<small>研究问题：{value.question_coverage.counts.supported} / {value.question_coverage.total} 项有证据回答，语义判断待复核。</small>}
+    {!!value.failed_sources&&<small>{value.failed_sources} 个来源未能读取正文。</small>}
+  </div>
+}
 function WebReferences({sources}:any){return <div className="web-references">{sources.filter((s:any)=>/^https?:\/\//i.test(s.url||'')).map((s:any,i:number)=><a href={s.url} target="_blank" rel="noopener noreferrer" key={s.id||s.url||i}><Globe2 size={15}/><span>{s.title||s.url}<small>{s.published_at||'日期未确认'}{s.read_status?' · '+(({read:'已读原文',article_text:'已读原文',public_pdf_text:'已读PDF原文',pdf_link_only:'PDF链接，未读正文',failed:'未取得正文',completed:'已读原文',body_read:'已读原文',snippet_only:'搜索摘要',search_snippet:'搜索摘要'} as any)[s.read_status]||'待查阅'):''}</small></span><ExternalLink size={12}/></a>)}</div>}
 const constraintNames:any={saved_only:'只用已保存材料',no_network:'不联网',no_report:'不修改报告',no_calculation:'不计算估值',no_valuation:'不做估值',require_body:'核对原文',no_tools:'不调用工具',no_question_writes:'不修改问题记录'};
 function ConstraintChips({value}:any){
@@ -39,12 +54,14 @@ function ConstraintChips({value}:any){
  if(!labels.length&&!persistent.length)return null;
  return <div className="effective-constraints" aria-label="当前有效约束"><span className="constraint-scope">{value.scope==='continuation'?'续查沿用':'本轮约束'}</span>{labels.map((label:string,i:number)=><span className="constraint-chip" key={i}>{label}</span>)}{!!persistent.length&&<details><summary>持续约束 · {persistent.length} 项</summary><div>{persistent.map((label:string)=><span className="constraint-chip" key={label}>{label}</span>)}</div></details>}</div>
 }
-function Delivery({value,onResume,canResume,disabled}:any){
+function Delivery({value,onResume,canResume,disabled,turnId}:any){
  if(!value)return null;
  const incomplete=value.status!=='completed',completed=value.completed||[],pending=value.pending||[];
- if(!incomplete&&!value.report_changed)return null;
+ const savedThisTurn=completed.some((s:any)=>s.turn_id===turnId&&['build_investment_memo','refine_investment_memo','revise_report','start_research'].includes(s.tool));
+ const reportChanged=value.report_changed&&(!turnId||savedThisTurn),revision=value.report_revision_after??value.report_revision_before;
+ if(!incomplete&&!reportChanged)return null;
  const titles:any={completed:'本轮已完成',partial:'已保留进展，仍有事项未完成',failed:'本轮未完成',cancelled:'已停止，进展已保留'};
- return <section className={'turn-delivery '+value.status} aria-label="本轮执行结果"><div className="delivery-heading">{incomplete?<AlertCircle size={17}/>:<Check size={17}/>}<strong>{titles[value.status]||'本轮执行结果'}</strong></div>{value.report_changed?<p>报告已更新至第 {value.report_revision_after} 版。</p>:value.report_revision_before!=null&&<p>报告保留为第 {value.report_revision_before} 版。</p>}{!!completed.length&&<details><summary>已完成 {completed.length} 个步骤</summary><ul>{completed.map((step:any,i:number)=><li key={step.step_id||i}>{step.label||toolNames[step.tool]||step.tool}</li>)}</ul></details>}{!!pending.length&&<div className="delivery-pending"><strong>还需完成</strong><ul>{pending.map((item:string,i:number)=><li key={i}>{item}</li>)}</ul></div>}{canResume&&value.can_resume&&value.resume_from_turn_id&&<button type="button" className="secondary" disabled={disabled} onClick={()=>onResume(value.resume_from_turn_id)}>继续未完成部分<ChevronRight size={15}/></button>}</section>
+ return <section className={'turn-delivery '+value.status} aria-label="本轮执行结果"><div className="delivery-heading">{incomplete?<AlertCircle size={17}/>:<Check size={17}/>}<strong>{titles[value.status]||'本轮执行结果'}</strong></div>{reportChanged?<p>报告已更新至第 {revision} 版。</p>:revision!=null&&<p>沿用第 {revision} 版报告，本轮未保存新版本。</p>}{!!completed.length&&<details><summary>任务累计已完成 {completed.length} 个步骤</summary><ul>{completed.map((step:any,i:number)=><li key={step.step_id||i}>{step.label||toolNames[step.tool]||step.tool}</li>)}</ul></details>}{!!pending.length&&<div className="delivery-pending"><strong>还需完成</strong><ul>{pending.map((item:string,i:number)=><li key={i}>{item}</li>)}</ul></div>}{canResume&&value.can_resume&&value.resume_from_turn_id&&<button type="button" className="secondary" disabled={disabled} onClick={()=>onResume(value.resume_from_turn_id)}>继续未完成部分<ChevronRight size={15}/></button>}</section>
 }
 function Step({step,onOpen,onAdopt,busy,accepted}:any){
   const [open,setOpen]=useState(false),result=step.result;
@@ -52,7 +69,7 @@ function Step({step,onOpen,onAdopt,busy,accepted}:any){
     <button className="step-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}>{step.state==='running'?<LoaderCircle size={14} className="spin"/>:step.state==='completed'?<Check size={14}/>:<AlertCircle size={14}/>}<strong>{toolNames[step.tool]||step.tool}</strong><span>{step.message}</span>{open?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button>
     {result?.artifact==='valuation'&&<div className="chat-artifact"><ValuationResult result={result.result} compact/><button className="text-link" onClick={()=>onOpen('model')}>查看假设与计算过程<ChevronRight size={14}/></button></div>}
     {result?.artifact==='proposal'&&<div className="chat-artifact proposal-artifact"><div><strong>{result.proposal.method_name} · 待确认的探索方案</strong><span className="badge">{result.proposal.id}</span></div><AssumptionChips values={result.proposal.assumptions}/><p>{result.proposal.rationale}</p><button className="primary" disabled={busy||accepted} onClick={()=>onAdopt(result.proposal)}>{accepted?'已采用':'采用此方案并计算'}</button><small>也可以在对话中提出修改，再决定是否采用。</small></div>}
-    {result?.artifact==='report'&&<div className="chat-artifact report-artifact"><FilePenLine size={20}/><div><strong>报告已更新 · 第 {result.revision} 版</strong><p>{result.change_note}</p></div><button className="text-link" onClick={()=>onOpen('overview')}>查看报告</button></div>}
+    {result?.artifact==='report'&&<div className="chat-artifact report-artifact"><FilePenLine size={20}/><div><strong>{step.reused_from_step_id?'沿用已有报告':'报告已更新'} · 第 {result.revision} 版</strong><p>{result.change_note}</p></div><button className="text-link" onClick={()=>onOpen('overview')}>查看报告</button></div>}
     {result?.artifact==='research'&&<div className="chat-artifact report-artifact"><BookOpen size={20}/><div><strong>{result.company} · 财务底稿</strong><p>{result.fact_count} 项财务事实 · {result.state==='completed_with_gaps'?'已保存，含待核实项':result.state}</p></div><button className="text-link" onClick={()=>onOpen('overview')}>查看证据</button></div>}
     {open&&result?.artifact==='document'&&<div className="chat-artifact report-artifact"><FileText size={20}/><div><strong>{result.document.title}</strong><p>{result.page_count} 页</p><a href={'/api/documents/'+result.document.id+'/file'} target="_blank" rel="noreferrer">打开 PDF 原文</a></div></div>}
     {open&&result?.artifact==='document_search'&&<div className="chat-artifact document-citations"><strong>原文依据 · {result.snippets.length} 个片段</strong>{result.snippets.map((s:any,i:number)=><details key={i}><summary>{s.title} · 第 {s.page} 页{s.query?' · '+s.query:''}</summary><p>{s.text}</p><a href={s.url} target="_blank" rel="noreferrer">打开第 {s.page} 页</a></details>)}<small>{result.note}</small></div>}
@@ -147,8 +164,8 @@ export default function AgentChat({run,config,onConfigChange,onRunUpdated,onOpen
         {messages.map((m:any,i:number)=>{const steps=m.role==='user'?(chat?.steps||[]).filter((s:any)=>s.turn_id===m.turn_id):[];return <div key={m.id} className={'chat-turn '+m.role}>
           <div className="message-row"><span className="message-avatar">{m.role==='user'?<User size={15}/>:<Layers3 size={17}/>}</span><div className={'message-content '+(m.error?'error':'')}><div className="message-label">{m.role==='user'?'你':'研序'}<time>{new Date(m.time).toLocaleTimeString('zh-CN',{hour:'2-digit',minute:'2-digit'})}</time></div><ResearchText className="chat-prose" text={m.content}/></div></div>
           {!!steps.length&&<details className="tool-timeline" open={active&&i===messages.length-1}><summary><ActivityIcon running={active&&i===messages.length-1}/><span>{active&&i===messages.length-1?'正在研究':'研究过程'} · {steps.length} 个步骤</span>{steps.some((s:any)=>s.result?.artifact==='proposal')&&<span className="badge">含估值方案</span>}<ChevronDown size={14}/></summary><div className="tool-timeline-items">{steps.map((s:any)=><Step key={s.id} step={s} onOpen={openArtifact} busy={active||sending} accepted={chat?.proposals?.find((p:any)=>p.id===s.result?.proposal?.id)?.state==='accepted'} onAdopt={(p:any)=>send(undefined,'我采用估值方案 '+p.id+'（'+p.method_name+'），请按展示的参数计算并保存。')}/>)}</div></details>}
-          {m.role==='assistant'&&<Coverage value={m.coverage||turnCoverage(chat,m.turn_id)}/>}
-          {m.role==='assistant'&&<Delivery value={m.delivery} canResume={i===messages.length-1} disabled={active||sending||!profile} onResume={(id:string)=>send(undefined,'继续未完成部分',id)}/>}
+          {m.role==='assistant'&&<Coverage value={turnCoverage(chat,m.turn_id)||m.coverage}/>}
+          {m.role==='assistant'&&<Delivery value={m.delivery} turnId={m.turn_id} canResume={i===messages.length-1} disabled={active||sending||!profile} onResume={(id:string)=>send(undefined,'继续未完成部分',id)}/>}
           {m.role==='user'&&i===messages.length-1&&active&&<div className="thinking-status" role="status"><LoaderCircle size={14} className="spin"/>{stopping?'正在停止，等待服务器确认…':steps.at(-1)?.state==='running'?'正在执行工具…':'正在结合你的问题和工具结果继续研究…'}</div>}
         </div>})}<div ref={bottom}/>
       </div>

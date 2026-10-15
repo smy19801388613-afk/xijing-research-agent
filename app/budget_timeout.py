@@ -69,12 +69,14 @@ def expire_conversation(cid, turn_id, deadline_at=None):
                 step.update(state='failed', finished_at=stopped_at, stop_reason='time_limit',
                             result={'error': '本轮达到时间上限，该步骤尚未完成'})
         from .agent import delivery_state, progress_message
-        observed = chat.get('turn_coverage', {}).get(turn_id)
+        from .coverage_view import turn_observation
+        observed = turn_observation(chat, run)
+        chat.setdefault('turn_coverage', {})[turn_id] = observed
         delivery = delivery_state(chat, run, 'failed', observed)
         delivery['stop_reason'] = 'time_limit'
         chat['messages'].append({'id': uuid.uuid4().hex[:12], 'role': 'assistant', 'turn_id': turn_id,
             'content': message + '\n\n' + progress_message(delivery), 'time': stopped_at,
-            'error': True, 'incomplete': True, 'stop_reason': 'time_limit', 'delivery': delivery})
+            'error': True, 'incomplete': True, 'stop_reason': 'time_limit', 'delivery': delivery, 'coverage': observed})
         connection.execute('UPDATE conversations SET cancel=1,updated=?,payload=? WHERE id=?',
             (stopped_at, json.dumps(chat, ensure_ascii=False), cid))
     return chat

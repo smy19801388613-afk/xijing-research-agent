@@ -142,7 +142,12 @@ def conversation_list(run_id:str|None=None): return store.conversations(run_id)
 def conversation_create(request:ConversationRequest): return store.new_conversation(request.run_id)
 
 @app.get("/api/conversations/{cid}")
-def conversation_get(cid:str): return store.get_conversation(cid)
+def conversation_get(cid:str):
+    from .coverage_view import conversation_view
+    chat=store.get_conversation(cid)
+    try: run=store.get_run(chat['run_id']) if chat.get('run_id') else None
+    except KeyError: run=None
+    return conversation_view(chat,run)
 
 @app.get("/api/conversations/{cid}/documents")
 def conversation_documents(cid:str):
@@ -199,7 +204,10 @@ async def conversation_events(cid:str):
             value=store.get_conversation(cid)
             if value["updated_at"]!=last:
                 last=value["updated_at"]
-                yield "data: "+json.dumps(value,ensure_ascii=False)+"\n\n"
+                from .coverage_view import conversation_view
+                try: run=store.get_run(value['run_id']) if value.get('run_id') else None
+                except KeyError: run=None
+                yield "data: "+json.dumps(conversation_view(value,run),ensure_ascii=False)+"\n\n"
             if value["state"]!="running": break
             await asyncio.sleep(.7)
     return StreamingResponse(generate(),media_type="text/event-stream",headers={"Cache-Control":"no-cache"})

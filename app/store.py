@@ -196,6 +196,8 @@ def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None,executio
             'original_request':prior_context.get('original_request',text),'user_text':text,
             'resume_from_turn_id':resume_from_turn_id,'run_id':value.get('run_id'),
             'report_revision_before':prior_context.get('report_revision_before',run.get('report_revision')),
+            'turn_report_revision_before':run.get('report_revision'),
+            'resume_pending':list((previous or {}).get('delivery',{}).get('pending',[])) if resume_from_turn_id else [],
             'rules':policy['rules'],'required_artifacts':prior_context.get('required_artifacts',[]),
             'execution_budget':dict(budget),'started_at':started_at,'deadline_at':deadline_at}
         value.setdefault('turn_contexts',{})[tid]=context
@@ -240,11 +242,13 @@ def cancel_conversation(cid,turn_id=None):
             if step.get('turn_id')==tid and step.get('state')=='running':
                 step.update(state='cancelled',finished_at=now())
         from .agent import delivery_state,progress_message
-        observed=value.get('turn_coverage',{}).get(tid)
+        from .coverage_view import turn_observation
+        observed=turn_observation(value,run)
+        value.setdefault('turn_coverage',{})[tid]=observed
         delivery=delivery_state(value,run,'cancelled',observed)
         value['messages'].append({'id':uuid.uuid4().hex[:12],'role':'assistant','turn_id':tid,
             'content':'已停止本轮执行，已经完成的工具结果仍然保留。\n\n'+progress_message(delivery),
-            'time':now(),'error':True,'incomplete':True,'delivery':delivery})
+            'time':now(),'error':True,'incomplete':True,'delivery':delivery,'coverage':observed})
         c.execute('UPDATE conversations SET cancel=1,updated=?,payload=? WHERE id=?',
                   (value['updated_at'],json.dumps(value,ensure_ascii=False),cid))
     return value

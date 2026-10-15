@@ -130,7 +130,9 @@ def enforce(chat, name):
     if reason:
         raise ValueError(reason)
     if name == 'web_search' and rules['search_limit'] is not None:
-        done = sum(s.get('tool') == 'web_search' and s.get('state') == 'completed' and not s.get('reused_from_step_id') for s in task_steps(chat))
+        # The user's task limit also covers searches nested inside report tools,
+        # failed requests and continuation turns. Reused results consume no call.
+        done = coverage(task_steps(chat))['search_attempts']
         if done >= rules['search_limit']:
             raise ValueError('已达到用户限定的搜索次数，请查阅已找到的正文或说明缺口。')
     return rules
@@ -145,35 +147,66 @@ def canonical_url(url):
 def coverage(steps, text='', saved_sources=(), message='', as_of=None, run=None, require_body=None):
     """A successful call is not necessarily a body: require returned usable text."""
     sources = {}; search_calls = 0; search_results = 0; local_pages = set(); attempts = 0
+    search_attempts = 0; telemetry_incomplete = False; expanded = []; seen_events = set()
     for step in steps:
         if step.get('reused_from_step_id'): continue
+        if isinstance(step.get('retrieval_events'), list):
+            for event in step['retrieval_events']:
+                identity = event.get('id')
+                if identity and identity in seen_events: continue
+                if identity: seen_events.add(identity)
+                # The report may fail after successful reading. Individual event
+                # states, not the outer tool state, establish what was observed.
+                expanded.append(dict(event, tool='web_search' if event.get('kind') == 'search'
+                                     else event.get('kind')))
+            continue
+        result = step.get('result') or {}
+        if step.get('tool') == 'build_investment_memo' and (not isinstance(result,dict) or 'observed_sources' not in result):
+            if step.get('progress') or step.get('state') in ('failed','cancelled','running'):
+                telemetry_incomplete = True
+        if step.get('tool') == 'build_investment_memo' and isinstance(result,dict):
+            # Old aggregate sources mixed full-page reads with document-search
+            # snippets. Their presence cannot establish actual local read pages.
+            if any(s.get('url','').startswith('/api/documents/') for s in result.get('observed_sources',[])):
+                telemetry_incomplete = True
+        expanded.append(step)
+    for step in expanded:
         name = step.get('tool'); result = step.get('result') or {}; args = step.get('arguments') or {}
         if not isinstance(result, dict): continue
+        # A top-level tool card is created before authorization/limit checks.
+        # Only a dispatched request consumes budget. Nested retrieval events
+        # begin at dispatch; legacy records without this flag remain countable.
+        if name == 'web_search' and step.get('search_dispatched') is False: continue
         if name == 'web_search':
+            search_attempts += 1
             if step.get('state') == 'completed': search_calls += 1
             search_results += len(result.get('results', []))
         if name in ('read_webpage','read_web_page','read_public_pdf'): attempts += 1
-        if name == 'read_document' and not result.get('error'):
+        if name == 'read_document' and step.get('state') == 'completed' and not result.get('error'):
             local_pages.update(s.get('url') for s in result.get('snippets', [])
-                               if eligibility(dict(s,read_status=s.get('extraction','pdf_text')),run,as_of)['readable_body'])
+                               if s.get('url') and eligibility(dict(s,read_status=s.get('read_status') or s.get('extraction','pdf_text')),run,as_of)['readable_body']
+                               and eligibility(s,run,as_of)['historical_eligibility'] != 'after_cutoff')
         rows = result.get('results', []) if name in ('web_search','read_public_pdf') else [result] if name in ('read_webpage','read_web_page') else result.get('observed_sources',[]) if name=='build_investment_memo' else []
         if name=='build_investment_memo':
             search_calls += len(result.get('search_runs',[]))
+            search_attempts += len(result.get('search_runs',[]))
             search_results += sum(s.get('result_count',0) for s in result.get('search_runs',[]))
         if name in ('read_webpage','read_web_page','read_public_pdf') and not rows:
             rows = [{'url':args.get('url'), 'read_status':'failed'}]
         for row in rows:
             url = row.get('url') or args.get('url', '')
-            if not url or not url.startswith(('http://','https://')): continue
+            if not url: continue
+            if not url.startswith(('http://','https://')): continue
             key = canonical_url(url)
             source=dict(row)
             if name=='web_search': source['read_status']='search_snippet'
             elif not source.get('read_status'): source['read_status']=source.get('extraction','body_read')
             policy=eligibility(source,run,as_of)
-            body = (name != 'web_search' and step.get('state') not in ('failed','cancelled') and not result.get('error')
+            body = (name != 'web_search' and step.get('state') == 'completed' and not result.get('error')
                     and result.get('status') not in ('error','excluded','excluded_after_cutoff','needs_ocr','document_link')
                     and policy['readable_body'] and policy['historical_eligibility']!='after_cutoff')
-            status = 'body_read' if body else 'failed' if name not in ('web_search','build_investment_memo') else 'search_snippet'
+            status = ('body_read' if body else 'pending' if step.get('state') == 'running' else
+                      'failed' if name not in ('web_search','build_investment_memo') else 'search_snippet')
             prior = sources.get(key)
             value = {k:row.get(k) for k in ('title','published_at','source_type')}
             value.update(url=url, read_status=status, cited=url in message or key in message,eligibility=policy)
@@ -181,18 +214,33 @@ def coverage(steps, text='', saved_sources=(), message='', as_of=None, run=None,
             if prior and status == 'search_snippet': continue
             sources[key] = value
     bodies = sum(s['read_status'] == 'body_read' for s in sources.values())
-    cited_urls = {canonical_url(url) for url in re.findall(r'''(?:https?://|/api/documents/)[^\s<>()\[\]"'，。；]+''', message)}
-    read_this_turn = {url for url, source in sources.items() if source['read_status'] == 'body_read'}
-    reused_urls = {canonical_url(s['url']) for s in saved_sources if s.get('url')
+    def evidence_key(url):
+        return url if url.startswith('/api/documents/') else canonical_url(url)
+    cited_urls = {evidence_key(url) for url in re.findall(r'''(?:https?://|/api/documents/)[^\s<>()\[\]"'，。；]+''', message)}
+    read_this_turn = {url for url, source in sources.items() if source['read_status'] == 'body_read'} | local_pages
+    reused_urls = {evidence_key(s['url']) for s in saved_sources if s.get('url')
                    and eligibility(s,run,as_of)['readable_body'] and eligibility(s,run,as_of)['historical_eligibility']!='after_cutoff'
-                   and (s['url'] in message or canonical_url(s['url']) in cited_urls)}
+                   and evidence_key(s['url']) in cited_urls}
     reused = len(reused_urls - read_this_turn)
+    # Inventory is separate from current reading and citation: merely having a
+    # stored body does not satisfy this turn's evidence obligation.
+    saved_bodies = set(); saved_verified_bodies = set()
+    for source in saved_sources:
+        if not source.get('url'): continue
+        policy = eligibility(source,run,as_of)
+        key = evidence_key(source['url'])
+        if policy['readable_body'] and policy['historical_eligibility'] != 'after_cutoff':
+            saved_bodies.add(key)
+            if policy['supports_answer']: saved_verified_bodies.add(key)
     if require_body is None: require_body = constraints(text)['require_body']
     unmet = require_body and not (bodies or local_pages or reused)
-    gaps = ['本轮尚未取得可用正文；搜索摘要不满足正文查证要求。'] if unmet else []
+    gaps = (['部分检索记录不完整，需核对已保存来源；不能据此断言未搜索或未读取正文。']
+            if unmet and telemetry_incomplete else ['本轮尚未取得可用正文；搜索摘要不满足正文查证要求。'] if unmet else [])
     unread = sum(s['read_status'] != 'body_read' for s in sources.values())
     return dict(search_calls=search_calls, search_results=search_results, body_sources=bodies, document_pages=len(local_pages),
                 body_attempts=attempts, reused_cited_sources=reused, saved_sources_available=len(saved_sources),
+                search_attempts=search_attempts, telemetry_incomplete=telemetry_incomplete,
+                saved_body_sources=len(saved_bodies), saved_verified_body_sources=len(saved_verified_bodies),
                 unread_sources=unread, failed_sources=sum(s['read_status']=='failed' for s in sources.values()),
-                require_body=require_body, status='partial' if unmet else 'observed', gaps=gaps,
+                require_body=require_body, status='unknown' if unmet and telemetry_incomplete else 'partial' if unmet else 'observed', gaps=gaps,
                 sources=sorted(sources.values(), key=lambda s:(s['read_status']!='body_read',not s['cited'])))

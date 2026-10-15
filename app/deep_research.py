@@ -7,6 +7,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.parse import urlparse
 from . import store, documents, disclosures, web_research, competition
@@ -42,6 +43,70 @@ def source_id(url):
     p=urlparse(url)
     key=(p.hostname or '').lower()+p.path+'?'+p.query+('#'+p.fragment if re.fullmatch(r'page=\d+',p.fragment) else '')
     return "web-" + hashlib.sha256(key.encode()).hexdigest()[:12]
+
+
+class RetrievalRecorder:
+    """Persist completed retrieval independently of the eventual report result."""
+    def __init__(self, chat):
+        self.chat = chat
+        self.step_id = None
+        if chat.get('id'):
+            current = store.get_conversation(chat['id'])
+            step = next((s for s in reversed(current.get('steps', [])) if
+                s.get('turn_id') == chat.get('turn_id') and s.get('state') == 'running'
+                and s.get('tool') == 'build_investment_memo'), None)
+            if step:
+                self.step_id = step['id']
+                def initialize(s):
+                    s['retrieval_events_schema'] = 1
+                    s.setdefault('retrieval_events', [])
+                self.change(initialize)
+
+    def change(self, fn):
+        if not self.step_id: return
+        def update(c):
+            step = next((s for s in c.get('steps', []) if s.get('id') == self.step_id
+                         and s.get('turn_id') == self.chat.get('turn_id')), None)
+            if step is not None: fn(step)
+        store.update_conversation(self.chat['id'], update)
+
+    def begin(self, kind, arguments):
+        event = {'id':uuid.uuid4().hex[:12], 'kind':kind, 'state':'running',
+                 'arguments':arguments, 'started_at':store.now()}
+        self.change(lambda s:s['retrieval_events'].append(event))
+        return event['id']
+
+    def finish(self, identity, result=None, error=None):
+        result = dict(result or {})
+        if error is not None: result = {'error':str(error)[:1200]}
+        failed = bool(result.get('error')) or result.get('status') in (
+            'error','failed','blocked','excluded','excluded_after_cutoff','needs_ocr')
+        def update(step):
+            event = next(e for e in step['retrieval_events'] if e['id'] == identity)
+            event.update(state='failed' if failed else 'completed', finished_at=store.now(), result=result)
+        self.change(update)
+
+    def save(self, identity, result):
+        sources = register_sources(self.chat, result)
+        # Local read responses omit the document's publication date. Persist the
+        # registered source metadata so coverage applies the same cutoff policy.
+        by_url = {s.get('url'):s for s in sources}
+        observed = dict(result)
+        for key in ('snippets', 'results'):
+            if key in result:
+                observed[key] = [dict(row, **{k:by_url[row.get('url')][k] for k in
+                    ('published_at','read_status','kind') if k in by_url[row.get('url')]})
+                    if row.get('url') in by_url else row for row in result[key]]
+        self.finish(identity, observed)
+        return result
+
+    def retrieve(self, kind, arguments, operation):
+        identity = self.begin(kind, arguments)
+        try:
+            return self.save(identity, operation())
+        except (ValueError, ProviderError, TypeError) as error:
+            self.finish(identity, error=error)
+            raise
 
 
 def register_sources(chat, result):
@@ -335,6 +400,7 @@ def build(run_id, question, chat=None, progress=None):
     if deadline is None: deadline=started+600
     run = store.get_run(run_id)
     chat = chat or {"run_id": run_id}
+    retrieval = RetrievalRecorder(chat)
     allow_question_writes=question_writes_allowed(chat)
     req = run["request"]
     calls, search_log, limitations = [], [], []
@@ -409,22 +475,34 @@ def build(run_id, question, chat=None, progress=None):
     pdf_queries = [q[:40] for q in plan.get("pdf_queries", []) if isinstance(q, str) and len(q) >= 2][:6]
     pdf_queries = pdf_queries or ["主要业务", "产品", "应收账款", "减值", "研发", "风险"]
     if documents.attached_documents(chat):
-        found = documents.search_attached(chat, pdf_queries)
-        register_sources(chat, found)
+        found = retrieval.retrieve('search_documents', {'queries':pdf_queries},
+                                   lambda:documents.search_attached(chat, pdf_queries))
         # Read actual pages beyond the snippets. Six pages keeps the evidence budget bounded.
         unique = list(dict.fromkeys((s["document_id"], s["page"]) for s in found.get("snippets", [])))[:6]
         for did, page in unique:
             update("查阅年报产品与财务附注原文")
-            register_sources(chat, documents.read_attached(chat, did, page, 1))
+            retrieval.retrieve('read_document', {'document_id':did,'page':page,'count':1},
+                               lambda:documents.read_attached(chat, did, page, 1))
         # Comparative statement/notes are often far from management's summary.
-        register_sources(chat,documents.search_attached(chat,['合并利润表','信用减值损失','资产减值损失']))
+        statement_queries = ['合并利润表','信用减值损失','资产减值损失']
+        retrieval.retrieve('search_documents', {'queries':statement_queries},
+                           lambda:documents.search_attached(chat, statement_queries))
     def gather(qs, read_limit):
         if local_only:
             return {"results":[],"limitations":["比赛模式资料网络未许可"]}
+        if chat.get('id'):
+            from .turn_constraints import enforce
+            try:
+                enforce(store.get_conversation(chat['id']), 'web_search')
+            except ValueError as error:
+                reason = str(error)
+                if reason not in limitations: limitations.append(reason)
+                return {'results':[], 'limitations':[reason]}
         update("联网查找并读取来源正文")
-        found = web_research.search(qs, as_of=cutoff, max_results=18)
-        register_sources(chat, found)
+        found = retrieval.retrieve('search', {'queries':qs},
+                                   lambda:web_research.search(qs, as_of=cutoff, max_results=18))
         search_log.append({k:v for k,v in found.items() if k != "results"} | {"result_count": len(found.get("results", []))})
+        record('searches',list(search_log))
         limitations.extend(found.get("limitations", []))
         candidates, domains = [], {}
         items=sorted(found.get('results',[]),key=lambda s:(s.get('source_type') in ('government','official_disclosure'),
@@ -444,7 +522,11 @@ def build(run_id, question, chat=None, progress=None):
                 return public_pdf.read(url,as_of=cutoff,queries=pdf_queries+['更正','营业收入','经营活动产生的现金流量净额','信用减值损失'])
             return web_research.read(url,as_of=cutoff)
         with ThreadPoolExecutor(max_workers=4) as pool:
-            pending={pool.submit(read_source,url):url for url in candidates}
+            pending = {}
+            for url in candidates:
+                identity = retrieval.begin('read_public_pdf' if urlparse(url).path.lower().endswith('.pdf')
+                                           else 'read_webpage', {'url':url})
+                pending[pool.submit(read_source,url)] = identity
             for future in as_completed(pending):
                 update("读取联网原文并保留引用")
                 try:
@@ -452,17 +534,19 @@ def build(run_id, question, chat=None, progress=None):
                     if result.get('status') not in ('ok',None):
                         limitations.extend(result.get('limitations',[]))
                         if result.get('message'): limitations.append(str(result['message'])[:250])
-                    register_sources(chat,result)
+                    retrieval.save(pending[future], result)
                     host=urlparse(result.get('url','')).hostname
                     # Product pages on the company's own site provide detail beyond news snippets.
                     if host and not any(d in host for d in ('eastmoney','sina','sohu','baidu','bing','qq.com','163.com','xueqiu')):
                         follow_links.extend(s['url'] for s in result.get('links',[]) if
                             urlparse(s['url']).hostname==host and re.search(r'产品|大模型|智能体|万象|半年|业绩|监管',s.get('title','')))
-                except (ValueError,ProviderError,TypeError):
+                except (ValueError,ProviderError,TypeError) as error:
+                    retrieval.finish(pending[future], error=error)
                     limitations.append("部分网页正文未能取得，保留搜索摘要并标注，未当作全文证据")
         for url in list(dict.fromkeys(follow_links))[:2]:
             update('沿官网线索核对具体产品与最新事件')
-            register_sources(chat,read_source(url))
+            retrieval.retrieve('read_public_pdf' if urlparse(url).path.lower().endswith('.pdf') else 'read_webpage',
+                               {'url':url}, lambda:read_source(url))
         return found
     gather(queries[:8], 8)
     run = store.get_run(run_id)
@@ -474,7 +558,8 @@ def build(run_id, question, chat=None, progress=None):
         gather(follow_queries, 5)
     more_pdf = [q[:40] for q in follow.get("pdf_queries", []) if isinstance(q, str) and len(q) >= 2][:3]
     if more_pdf and documents.attached_documents(chat):
-        register_sources(chat, documents.search_attached(chat, more_pdf))
+        retrieval.retrieve('search_documents', {'queries':more_pdf},
+                           lambda:documents.search_attached(chat, more_pdf))
     run = store.get_run(run_id)
     refs = reference_catalog(run)
     # Financial facts + all collected material, with source provenance retained.
@@ -504,7 +589,8 @@ def build(run_id, question, chat=None, progress=None):
             gather(verify,6)
         pdf_verify=[q[:40] for q in review.get('pdf_queries',[]) if isinstance(q,str) and len(q)>=2][:3]
         if pdf_verify and documents.attached_documents(chat):
-            register_sources(chat,documents.search_attached(chat,pdf_verify))
+            retrieval.retrieve('search_documents', {'queries':pdf_verify},
+                               lambda:documents.search_attached(chat,pdf_verify))
         run=store.get_run(run_id);refs=reference_catalog(run)
         report_valuation_snapshot = valuation_snapshot(run)
         context['valuations'] = run.get('valuation_history', [])[-4:]
