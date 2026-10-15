@@ -228,7 +228,16 @@ def _on_site(url, domain):
 
 
 def _topic(query):
-    for needles, terms in ((r"半年度报告|半年报|中报", ("半年度报告", "半年报", "中报", "上半年")),
+    # An implementation notice or meeting resolution is more specific than a
+    # fiscal-year/report mention. Route it to the official disclosure directory
+    # using the exchange's actual naming, not only the user's "分红" wording.
+    for needles, terms in ((r"(?:权益分派|利润分配|分红|派息).{0,12}(?:实施|发放|到账)|(?:实施|发放|到账).{0,12}(?:权益分派|利润分配|分红|派息)",
+                            ("权益分派实施公告", "利润分配实施公告", "分红实施公告", "派息实施公告", "现金红利发放")),
+                           (r"股东(?:大)?会.{0,12}决议", ("股东会决议", "股东大会决议")),
+                           (r"(?:股份|股票|集中竞价).{0,8}回购|回购.{0,12}(?:股份|股票|公告|方案|进展|实施|完成)", ("回购",)),
+                           (r"利润分配", ("利润分配", "权益分派", "分红", "派息")),
+                           (r"权益分派|分红|派息", ("权益分派", "利润分配", "分红", "派息")),
+                           (r"半年度报告|半年报|中报", ("半年度报告", "半年报", "中报", "上半年")),
                            (r"会计差错|差错更正", ("会计差错", "差错更正")),
                            (r"警示函", ("警示函",)), (r"监管函", ("监管函",)),
                            (r"年报|年度报告", ("年度报告", "年报"))):
@@ -266,6 +275,8 @@ def _score(query, row):
         score += 5
     elif kind == "disclosure_mirror":
         score += 4
+    if topic and any(term in row.get("title", "") for term in topic):
+        score += 3
     if topic and "摘要" in row.get("title", "") and "摘要" not in query:
         score -= 3
     if re.search(r"融资净|融资余额|融券余额|龙虎榜|主力资金|涨停分析", row.get("title", "")) and not re.search(r"融资|融券|龙虎榜|资金流|涨停", query):
@@ -296,6 +307,9 @@ def _cninfo(query, as_of=None):
     start_year = min(years) if years else int(cutoff[:4]) - 2
     topic = _topic(query)
     key = topic[0] if topic else ""
+    # Both legal names are in use. The shared directory keyword discovers both;
+    # _score still requires the specific shareholder-meeting resolution title.
+    if key == '股东会决议': key = '决议'
     code = security["code"]
     response = _fetch("https://www.cninfo.com.cn/new/hisAnnouncement/query", method="POST", data={
         "pageNum": "1", "pageSize": "50", "column": "sse" if code.startswith(("6", "9")) else "bse" if code.startswith(("4", "8")) else "szse",

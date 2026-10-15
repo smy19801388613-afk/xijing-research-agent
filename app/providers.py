@@ -66,11 +66,12 @@ def _usage_total(attempts):
 
 def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=False,
                *, cancel_check=None, deadline=None):
-    """Generate one complete JSON object, with at most one length recovery.
+    """Generate one complete JSON object, with at most one recovery request.
 
     max_tokens is the desired answer budget. DeepSeek thinking needs a separate
     reserve within its combined generation limit. A retry always starts from the
-    original evidence; no incomplete JSON or private reasoning is reused.
+    original evidence; no incomplete JSON or private reasoning is reused. A
+    completed empty response and a length stop share the same two-request cap.
     deadline is an optional absolute time.monotonic() deadline.
     """
     from .connections import resolve_model, validate_base
@@ -101,6 +102,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
     attempts = []
     actual_limit = first_limit
     active_reservation = None
+    recovery_reason = None
 
     def settle_current(status):
         nonlocal active_reservation
@@ -145,11 +147,16 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
     if thinking:
         prompt += f"\nKeep the final JSON answer within approximately {answer_budget} tokens. Preserve required fields, source IDs and uncertainty; avoid repeating source text."
 
-    for index, actual_limit in enumerate((first_limit, second_limit), 1):
+    for index, requested_limit in enumerate((first_limit, second_limit), 1):
         check()
+        # An empty completed response is not evidence of an output limit. Keep
+        # its original ceiling; length recovery alone may request a larger one.
+        actual_limit = first_limit if recovery_reason == "empty_response" else requested_limit
         current_prompt = prompt
         if index > 1:
-            current_prompt += ("\nThe previous response exceeded a generation or context limit and was discarded. "
+            current_prompt += (("\nThe previous provider response completed without a final answer. "
+                "Return the requested JSON object in the final answer. " if recovery_reason == "empty_response" else
+                "\nThe previous response exceeded a generation or context limit and was discarded. ") +
                 "Generate a fresh, complete JSON object from the original inputs. Be concise: remove repetition, "
                 "use short exact evidence quotes, preserve required fields and material uncertainty. "
                 "Do not continue or refer to the discarded response, invent facts, or claim unfinished work completed.")
@@ -170,6 +177,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
         competition.audit("model_request", model=cfg["model"], protocol=cfg["protocol"], system=current_prompt,
             payload=payload, max_tokens=actual_limit, answer_budget=max_tokens, attempt=index)
         attempt = {"attempt": index, "actual_limit": actual_limit, "status": "requesting", "usage": {}}
+        if recovery_reason: attempt['recovery_reason'] = recovery_reason
         attempts.append(attempt)
         attempt_started = time.monotonic()
         timeout = 300 if reasoning else 80
@@ -180,6 +188,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
             data = response.json()
             attempt["usage"] = _safe_usage(data.get("usage"))
             settle_current('received')
+            refused = False
             if cfg["protocol"] == "anthropic":
                 content = "".join(block["text"] for block in data.get("content", []) if block.get("type") == "text")
                 finish_reason = data.get("stop_reason")
@@ -187,7 +196,9 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
                 completed = finish_reason in (None, "end_turn", "stop_sequence")
             else:
                 choice = data["choices"][0]
-                content = choice["message"].get("content") or ""
+                content = choice["message"].get("content")
+                if content is None: content = ""
+                refused = bool(choice["message"].get("refusal"))
                 finish_reason = choice.get("finish_reason")
                 stopped = finish_reason == "length"
                 completed = finish_reason in (None, "stop")
@@ -198,17 +209,33 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
                            content_chars=len(content), elapsed_ms=int((time.monotonic() - attempt_started) * 1000),
                            status="truncated" if stopped else "received")
             check()
+            if refused:
+                attempt['status'] = 'interrupted'
+                fail("模型服务中断了本次生成，未采用不完整草稿；已有证据仍保留", 'provider_interrupted')
             if stopped:
                 generated = attempt["usage"].get("completion_tokens", attempt["usage"].get("output_tokens"))
                 attempt.update(status="truncated", truncation_cause=("generation_budget" if isinstance(generated, int) and generated >= actual_limit else "output_or_context_limit"))
                 competition.audit("model_attempt", diagnostics=attempt)
                 if index == 1:
+                    recovery_reason = "length"
                     continue
-                fail("模型两次生成仍达到单次输出或上下文上限，未采用不完整草稿；请减少单次研究问题或分段更新报告", "length_exhausted")
+                fail("模型在本次最多两次请求后仍达到单次输出或上下文上限，未采用不完整草稿；请减少单次研究问题或分段更新报告", "length_exhausted")
             if not completed:
                 attempt["status"] = "interrupted"
                 fail("模型服务中断了本次生成，未采用不完整草稿；已有证据仍保留", "provider_interrupted")
             content = content.strip()
+            if not content:
+                attempt['status'] = 'empty_response'
+                competition.audit('model_attempt', diagnostics=attempt)
+                # Missing completion metadata is not proof that the provider
+                # finished successfully; malformed/interrupted replies do not
+                # get a new recovery policy merely because their body is empty.
+                if index == 1 and finish_reason in ('stop', 'end_turn', 'stop_sequence'):
+                    recovery_reason = 'empty_response'
+                    continue
+                detail = ("已达到本次最多两次请求的恢复上限" if index > 1 else
+                          "接口也未提供明确完成标记，未自动重试")
+                fail("模型服务未返回正文，" + detail + "；已保留已有证据，未保存空白或不完整草稿", 'empty_response')
             fence = chr(96) * 3
             if content.startswith(fence): content = content.split("\n", 1)[-1].rsplit(fence, 1)[0].strip()
             value = json.loads(content)
@@ -235,7 +262,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
             fail("模型网络请求失败，已保留已有证据；请检查当前模型连接", "network_error")
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             attempt.update(status="invalid_response", elapsed_ms=int((time.monotonic() - attempt_started) * 1000))
-            fail("模型调用超时、请求失败或未返回有效 JSON；已保留财务证据，不生成无依据结论", "invalid_response")
+            fail("模型响应格式无效，未取得有效 JSON 对象；已保留财务证据，未保存无效草稿", "invalid_response")
         finally:
             # Cancellation and deadline checks may interrupt before fail(). A
             # killed process instead leaves its persisted reservation for the

@@ -194,6 +194,55 @@ def test_precise_report_and_correction_queries_reject_wrong_topic_or_year():
     assert web._score("华宇软件 2026 半年度报告", row("华宇软件2026年半年度报告")) > 0
 
 
+@pytest.mark.parametrize('query,keyword', [
+    ('测试银行 2025年度 权益分派实施公告', '权益分派实施公告'),
+    ('测试银行 2025年报 分红实施公告', '权益分派实施公告'),
+    ('测试银行 2025 年度利润分配实施情况', '权益分派实施公告'),
+    ('测试银行 2025年度利润分配方案', '利润分配'),
+    ('测试银行 现金分红', '权益分派'),
+    ('测试银行 2025年度股东会决议公告', '股东会决议'),
+    ('测试银行 年度股东大会决议', '股东会决议'),
+    ('测试银行 回购股份进展公告', '回购'),
+])
+def test_corporate_action_intents_take_precedence_over_report_mentions(query, keyword):
+    assert web._topic(query)[0] == keyword
+
+
+@pytest.mark.parametrize('query', ['白酒行业竞争格局', '银行逆回购利率走势', '行业利润率与销售增长', '年度经营展望'])
+def test_generic_industry_words_do_not_trigger_disclosure_topics(query):
+    assert web._topic(query) == ()
+
+
+def test_dividend_implementation_query_routes_to_official_directory(monkeypatch):
+    monkeypatch.delenv('TAVILY_API_KEY', raising=False)
+    monkeypatch.delenv('BRAVE_SEARCH_API_KEY', raising=False)
+    calls = []
+    def official(query, cutoff):
+        calls.append((query, cutoff))
+        return [row('测试银行：2025年年度权益分派实施公告',
+                    'https://static.cninfo.com.cn/finalpage/2026-06-22/1234567890.PDF',
+                    '2026-06-22', '上市公司公开披露附件；600000；PDF原文尚未读取。')]
+    monkeypatch.setattr(web, '_cninfo', official)
+    for name in ('_sina_disclosures', '_eastmoney', '_bing', '_duckduckgo'):
+        monkeypatch.setattr(web, name, lambda *args: [])
+    query = '测试银行 600000 2025 年报 分红实施公告'
+    result = web.search([query], '2026-10-15')
+    assert calls == [(query, '2026-10-15')]
+    assert result['results'][0]['engine'] == 'cninfo'
+    assert result['results'][0]['read_status'] == 'pdf_link_only'
+    assert result['results'][0]['published_at'] == '2026-06-22'
+
+
+def test_dividend_implementation_filters_report_and_proposal_but_accepts_official_name():
+    query = '测试银行 600000 2025年报 分红实施公告'
+    assert web._score(query, row('测试银行：2025年年度权益分派实施公告', snippet='600000')) > 0
+    assert web._score(query, row('测试银行：2025年年度利润分配实施公告', snippet='600000')) > 0
+    assert web._score(query, row('测试银行：2025年年度报告', snippet='600000')) == -1
+    assert web._score(query, row('测试银行：2025年度利润分配预案', snippet='600000')) == -1
+    assert web._score('测试银行 股东大会决议', row('测试银行：2025年度股东会决议公告')) > 0
+    assert web._score('测试银行 股东大会决议', row('测试银行：董事会决议公告')) == -1
+
+
 def test_official_directory_uses_real_returned_attachment_and_china_date(monkeypatch):
     monkeypatch.setattr(web, "_query_security", lambda q: {"code": "600000", "orgId": "org123", "zwjc": "测试银行"})
     from datetime import datetime, timezone
