@@ -134,17 +134,18 @@ def test_continuation_guard_honors_restrictions(chat, monkeypatch, restriction):
     assert saved['messages'][-1]['delivery']['can_resume']
 
 
-def test_recovery_leaves_final_decision_for_answer(chat, monkeypatch):
+def test_recovery_can_continue_beyond_legacy_decision_limit(chat, monkeypatch):
     begin(chat, '联网搜索并阅读关键原文。', execution_budget={'generation_tokens': 49152, 'time_minutes': 15, 'max_decisions': 2})
     monkeypatch.setattr(agent.web_research, 'search', lambda *a, **k: {'results': [
         {'url': 'https://example.com/new', 'title': '线索', 'snippet': '待阅读', 'published_at': '2026-03-01'}]})
-    monkeypatch.setattr(agent.web_research, 'read', lambda *a, **k: pytest.fail('last decision cannot start a read'))
+    monkeypatch.setattr(agent.web_research, 'read', lambda *a, **k: {
+        'url':'https://example.com/new','text':'已取得经营披露正文','read_status':'body_read','published_at':'2026-03-01'})
     monkeypatch.setattr(agent, 'model_json', lambda *a, **k: ({'action': 'respond', 'message': '已取得线索，正文待阅读。'}, {'model': 'stub'}))
     agent.execute(chat['id'])
     saved = store.get_conversation(chat['id'])
-    assert len(saved['model_calls']) == 2
-    assert [s['tool'] for s in saved['steps']] == ['web_search']
-    assert saved['messages'][-1]['delivery']['status'] == 'partial'
+    assert len(saved['model_calls']) == 3
+    assert [s['tool'] for s in saved['steps']] == ['web_search','read_webpage']
+    assert saved['messages'][-1]['delivery']['status'] == 'completed'
 
 
 @pytest.mark.parametrize('text', ['如何使用联网搜索？', '你能联网搜索吗？', '这个系统是否支持联网搜索？',
@@ -192,7 +193,12 @@ def test_final_response_is_preserved_when_report_remains_unfinished(chat, monkey
     begin(chat, '联网搜索并生成报告。', execution_budget={'generation_tokens': 49152, 'time_minutes': 15, 'max_decisions': 2})
     monkeypatch.setattr(agent.web_research, 'search', lambda *a, **k: {'results': [
         {'url': 'https://example.com/new', 'title': '线索', 'snippet': '待阅读'}]})
-    monkeypatch.setattr(agent, 'model_json', lambda *a, **k: ({'action': 'respond', 'message': '已找到原文线索，尚缺资本开支明细。'}, {'model': 'stub'}))
+    decisions=iter([{'action':'respond','message':'先查证资料。'},
+                    {'action':'tool','tool':'build_investment_memo','arguments':{}},
+                    {'action':'tool','tool':'build_investment_memo','arguments':{}},
+                    {'action':'respond','message':'已找到原文线索，尚缺资本开支明细。'}])
+    monkeypatch.setattr(deep_research,'build',lambda *a,**k: (_ for _ in ()).throw(agent.ProviderError('报告服务不可用')))
+    monkeypatch.setattr(agent, 'model_json', lambda *a, **k: (next(decisions), {'model': 'stub'}))
     agent.execute(chat['id'])
     saved = store.get_conversation(chat['id'])
     last = saved['messages'][-1]
@@ -202,17 +208,18 @@ def test_final_response_is_preserved_when_report_remains_unfinished(chat, monkey
     assert last['delivery']['status'] == 'partial'
 
 
-def test_last_decision_cannot_start_a_long_report_tool(chat, monkeypatch):
+def test_legacy_last_decision_can_start_authorized_report_tool(chat, monkeypatch):
     begin(chat, '请生成报告。', execution_budget={'generation_tokens': 49152, 'time_minutes': 15, 'max_decisions': 2})
     decisions = iter([{'action': 'respond', 'message': '准备研究。'},
-                      {'action': 'tool', 'tool': 'build_investment_memo', 'arguments': {}}])
+                      {'action': 'tool', 'tool': 'build_investment_memo', 'arguments': {}},
+                      {'action':'respond','message':'本轮研究报告已保存。'}])
     monkeypatch.setattr(agent, 'model_json', lambda *a, **k: (next(decisions), {'model': 'stub'}))
-    monkeypatch.setattr(agent, 'tool', lambda *a, **k: pytest.fail('last decision started long work'))
+    monkeypatch.setattr(agent, 'tool', lambda *a, **k: {'artifact':'report','revision':2})
     agent.execute(chat['id'])
     saved = store.get_conversation(chat['id'])
-    assert saved['state'] == 'idle' and not saved['steps']
-    assert '未启动新的研究步骤' in saved['messages'][-1]['content']
-    assert saved['messages'][-1]['delivery']['can_resume']
+    assert saved['state'] == 'idle' and len(saved['steps'])==1
+    assert saved['steps'][0]['tool']=='build_investment_memo'
+    assert len(saved['model_calls'])==3
 
 
 def test_old_document_searches_do_not_exhaust_new_turn_allowance(chat, monkeypatch):

@@ -151,7 +151,7 @@ def update_conversation(cid,change):
 
 def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None,execution_budget=None):
     from .turn_constraints import resolve_turn_policy
-    from .execution_budget import normalize
+    from .execution_budget import normalize, initial_usage
     budget=normalize(execution_budget)
     with connection() as c:
         c.execute("BEGIN IMMEDIATE")
@@ -200,6 +200,7 @@ def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None,executio
             'resume_pending':list((previous or {}).get('delivery',{}).get('pending',[])) if resume_from_turn_id else [],
             'rules':policy['rules'],'required_artifacts':prior_context.get('required_artifacts',[]),
             'execution_budget':dict(budget),'started_at':started_at,'deadline_at':deadline_at}
+        context['budget_usage']=initial_usage(budget)|{'decisions_used':0}
         value.setdefault('turn_contexts',{})[tid]=context
         value['effective_constraints']=policy
         value['persistent_constraints']=policy['persistent_rules']
@@ -208,11 +209,32 @@ def begin_turn(cid,text,profile_id,data_source,resume_from_turn_id=None,executio
         value.pop('budget_exhausted',None)
         value.update(state="running",turn_id=tid,profile_id=profile_id,data_source=data_source,updated_at=now(),cancel_requested=False,
                      execution_budget=dict(budget),execution_deadline_at=deadline_at,
-                     budget_usage={'decisions_used':0,'max_decisions':budget['max_decisions']})
+                     budget_usage=dict(context['budget_usage']))
         if not value["messages"]: value["title"]=text[:35]
         value["messages"].append({"id":uuid.uuid4().hex[:12],"role":"user","content":text,"time":now(),"turn_id":tid})
         c.execute("UPDATE conversations SET cancel=0,updated=?,payload=? WHERE id=?",(value["updated_at"],json.dumps(value,ensure_ascii=False),cid))
     return value
+
+def record_budget_usage(cid,turn_id,usage):
+    """Persist each reservation/settlement before an obsolete worker can reuse it."""
+    def change(value):
+        if value.get('turn_id')!=turn_id or value.get('state')!='running':
+            raise ExecutionStopped()
+        value['budget_usage']={**value.get('budget_usage',{}),**usage}
+        value['budget_usage'].pop('max_decisions',None)
+        value.setdefault('turn_contexts',{}).setdefault(turn_id,{})['budget_usage']=dict(value['budget_usage'])
+    return update_conversation(cid,change)
+
+
+def finalize_budget_usage(value):
+    """A killed request has no final provider receipt; retain a labelled estimate."""
+    from .execution_budget import interrupted_usage
+    if 'total_tokens' not in value.get('budget_usage',{}): return
+    value['budget_usage']=interrupted_usage(value['budget_usage'])
+    tid=value.get('turn_id')
+    if tid in value.get('turn_contexts',{}):
+        value['turn_contexts'][tid]['budget_usage']=dict(value['budget_usage'])
+
 
 def cancel_conversation(cid,turn_id=None):
     """Finalize this turn atomically before killing its waiting worker.
@@ -238,6 +260,7 @@ def cancel_conversation(cid,turn_id=None):
         run_row=c.execute('SELECT payload FROM runs WHERE id=?',(value.get('run_id'),)).fetchone()
         run=json.loads(run_row[0]) if run_row else None
         value.update(state='cancelled',cancel_requested=True,updated_at=now())
+        finalize_budget_usage(value)
         for step in value['steps']:
             if step.get('turn_id')==tid and step.get('state')=='running':
                 step.update(state='cancelled',finished_at=now())

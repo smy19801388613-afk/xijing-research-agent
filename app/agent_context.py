@@ -1,0 +1,332 @@
+"""Small, read-only views for the agent's next decision.
+
+The database remains the evidence archive. Model decisions need current state,
+locators and a few excerpts, not every previous report, question revision and
+repeated PDF result. All limits operate on JSON values, never serialized JSON.
+"""
+from copy import deepcopy
+import hashlib
+import json
+
+from . import questions
+from .fact_state import fact_view
+from .report_state import report_valuation_status
+
+
+def size(value):
+    return len(json.dumps(value, ensure_ascii=False, separators=(',', ':'), default=str))
+
+
+def _clip(value, limit):
+    if not isinstance(value, str):
+        return deepcopy(value)
+    return value if len(value) <= limit else value[:max(0, limit - 15)] + '…[上下文节选，完整记录保留]'
+
+
+def _fields(value, names, text_limit=500):
+    locators = {'id', 'document_id', 'source_id', 'run_id', 'proposal_id', 'question_id',
+                'url', 'source_url', 'locator', 'reused_from_step_id'}
+    return {k: deepcopy(value[k]) if k in locators or k.endswith('_id') else _clip(value[k], text_limit)
+            for k in names if k in value}
+
+
+def _fit(value, limit):
+    """Bound a projected block; prefer shortening prose to dropping records."""
+    value = deepcopy(value)
+    prose = {'text', 'quote', 'body', 'summary', 'answer', 'reason', 'rationale',
+             'counter_evidence', 'content', 'message', 'note', 'change_note', 'explanation'}
+    while size(value) > limit:
+        strings, lists = [], []
+
+        def visit(node):
+            if isinstance(node, dict):
+                for key, child in node.items():
+                    if key in prose and isinstance(child, str) and len(child) > 80:
+                        strings.append((len(child), node, key))
+                    visit(child)
+            elif isinstance(node, list):
+                if len(node) > 1:
+                    lists.append((size(node), node))
+                for child in node:
+                    visit(child)
+
+        visit(value)
+        if strings:
+            length, parent, key = max(strings, key=lambda item: item[0])
+            parent[key] = _clip(parent[key], max(80, length // 2))
+        elif lists:
+            # Projectors order important/current records first.
+            _, items = max(lists, key=lambda item: item[0])
+            items.pop()
+        else:
+            # Pathological oversized opaque values must not produce malformed JSON.
+            return {'context_omitted': True, 'note': '该区块超过上下文预算；完整记录仍保留。'}
+    return value
+
+
+SOURCE_FIELDS = ('id', 'kind', 'title', 'url', 'source_url', 'document_id', 'page',
+                 'locator', 'published_at', 'announced_date', 'read_status', 'extraction',
+                 'source_type', 'eligibility', 'limitations', 'error')
+
+
+def compact_sources(sources, limit=4500, count=16, excerpt=450):
+    seen, selected = set(), []
+    for source in reversed(sources or []):
+        if not isinstance(source, dict):
+            continue
+        key = source.get('id') or (source.get('url'), source.get('page'))
+        if key in seen:
+            continue
+        seen.add(key)
+        item = _fields(source, SOURCE_FIELDS, 300)
+        text = source.get('text') or source.get('quote') or source.get('snippet')
+        if text and excerpt:
+            item['text'] = text[:excerpt]
+            item['excerpt_only'] = len(text) > excerpt
+        selected.append(item)
+        if len(selected) >= count:
+            break
+    return _fit(selected, limit)
+
+
+def _question(item, detailed=True):
+    result = _fields(item, ('id', 'question', 'completion_criteria', 'status', 'priority',
+                           'needs_review', 'archived', 'revision'), 1500)
+    if detailed:
+        result.update(_fields(item, ('answer', 'counter_evidence', 'next_action'), 450))
+        result['gaps'] = [_clip(g, 260) for g in item.get('gaps', [])[:4]]
+        result['bindings'] = [_fields(b, ('source_id', 'quote', 'relation', 'reason',
+             'url', 'page', 'read_status', 'qualifying', 'eligibility'), 250)
+             for b in item.get('bindings', [])[:3]]
+    return result
+
+
+def _coverage(view, limit=6500):
+    active = [q for q in view.get('items', []) if not q.get('archived')]
+    ordered = sorted(active, key=lambda q: (q.get('status') == 'supported' and not q.get('needs_review'),
+                     {'high': 0, 'medium': 1, 'low': 2}.get(q.get('priority'), 1)))
+    result = _fields(view, ('total', 'archived_count', 'counts', 'complete', 'note'))
+    result['items'] = []
+    for index, q in enumerate(ordered):
+        item = _question(q, False)
+        item['next_action'] = q.get('next_action', '')
+        if index < 5:
+            item['answer'] = _clip(q.get('answer', ''), 250)
+            item['gaps'] = [_clip(g, 180) for g in q.get('gaps', [])[:2]]
+            item['bindings'] = [_fields(b, ('source_id', 'quote', 'relation', 'qualifying', 'url', 'page'), 140)
+                                for b in q.get('bindings', [])[:1]]
+        result['items'].append(item)
+    result['context_note'] = '仅列当前问题状态及有限摘录，修订历史和完整证据仍保留；未展示不代表已完成。'
+    result['available_question_count'] = len(active)
+    fitted = _fit(result, limit)
+    # All active question texts and next actions stay visible. A larger question
+    # inventory may exceed the soft target rather than silently lose pending work.
+    by_id = {q.get('id'): q for q in fitted.get('items', [])}
+    fitted['items'] = [by_id.get(q['id'], _fields(q, ('id', 'question', 'completion_criteria',
+                      'status', 'priority', 'needs_review', 'next_action'), 1500)) for q in result['items']]
+    return fitted
+
+
+def _memo(memo):
+    if not isinstance(memo, dict):
+        return _clip(memo, 1500)
+    result = _fields(memo, ('title', 'summary', 'stance', 'as_of', 'created_at', 'schema_version'), 1000)
+    result['sections'] = [_fields(s, ('id', 'title', 'status', 'evidence_ids'), 150)
+                          for s in (memo.get('theses', []) + memo.get('sections', []))[:16]]
+    result['limitations'] = [_clip(item, 250) for item in memo.get('limitations', [])[:4]]
+    result['context_note'] = '已有报告仅展示摘要与章节索引，不重复注入长正文及冻结历史。'
+    return _fit(result, 2500)
+
+
+def bounded_context(chat, run=None, max_chars=18000):
+    """Return current research state without accessing or changing storage."""
+    if not run or not chat.get('run_id'):
+        return None
+    result = _fields(run, ('id', 'company', 'request', 'state', 'report_revision'), 1500)
+    result['facts'] = [_fit(fact_view(f, run), 1700) for f in run.get('facts', [])[:15]]
+    result['calculations'] = _fit(run.get('calculations', []), 2000)
+    result['gaps'] = [_clip(g, 300) for g in run.get('gaps', [])[:10]]
+    result['memo'] = _memo(run.get('memo'))
+    result['valuations'] = _fit(list(reversed(run.get('valuation_history', [])[-4:])), 1800)
+    result['report_valuation_status'] = _fit(report_valuation_status(run), 1600)
+    view = questions.snapshot(run)
+    result['question_coverage'] = _coverage(view)
+    # Exact source IDs and page locators remain addressable. There is one source
+    # view, rather than repeating all of it again in question_evidence_catalog.
+    catalog = questions.catalog(run)
+    research_ids = [s.get('id') for s in run.get('research_sources', [])]
+    refs = [s for sid, s in catalog.items() if sid not in research_ids]
+    refs += [catalog[sid] for sid in research_ids if sid in catalog]
+    result['research_sources'] = compact_sources(refs, limit=4500)
+    result['source_count'] = len(refs)
+    result['unread_web_links'] = compact_sources(run.get('research_links', []), limit=1400, count=6, excerpt=0)
+    result['context_note'] = '上下文仅保留当前状态及节选；原始研究记录未修改。需要完整原文时按来源网址或文件页码读取。'
+    coverage = result.pop('question_coverage')
+    fitted = _fit(result, max(2000, max_chars - size(coverage)))
+    fitted['question_coverage'] = coverage
+    return fitted
+
+
+def compact_conversation(messages, max_chars=5000):
+    """Keep recent intent and the first request, omitting long old answers."""
+    rows = [m for m in messages or [] if m.get('role') in ('user', 'assistant')]
+    selected = rows[-6:]
+    first = next((m for m in rows if m.get('role') == 'user'), None)
+    if first and not any(m is first for m in selected):
+        selected = [first] + selected
+    latest_user = next((m for m in reversed(selected) if m['role'] == 'user'), None)
+    result = [{'role': m['role'], 'content': (m.get('content', '') if m is latest_user else
+               _clip(m.get('content', ''), 2200 if m['role'] == 'user' else 700)),
+               '_context_order': index} for index, m in enumerate(selected)]
+    protected = next((m for m in reversed(result) if m['role'] == 'user'), None)
+    if size(result) > max_chars:
+        others = [m for m in reversed(result) if m is not protected]
+        kept = _fit(others, max(200, max_chars - size(protected)))
+        result = (kept if isinstance(kept, list) else []) + ([protected] if protected else [])
+        result.sort(key=lambda m: m['_context_order'])
+    for item in result:
+        item.pop('_context_order', None)
+    return result
+
+
+def _tool_result(result, recent, preserve_read=False):
+    if not isinstance(result, dict):
+        return _clip(result, 800)
+    item = _fields(result, ('artifact', 'run_id', 'revision', 'report_revision', 'id', 'document_id',
+                           'proposal_id', 'status', 'error', 'summary', 'message', 'change_note',
+                           'method', 'method_name', 'value', 'assumptions', 'result', 'note',
+                           'reused', 'state', 'source_count', 'source_ids', 'company', 'fact_count',
+                           'gaps', 'document_count', 'page_count', 'pages_without_text', 'warnings'), 700 if recent else 250)
+    for key in ('document', 'proposal'):
+        if isinstance(result.get(key), dict):
+            item[key] = _fit(result[key], 1800)
+    for key in ('snippets', 'results', 'observed_sources'):
+        if isinstance(result.get(key), list):
+            if preserve_read and key in ('snippets', 'results'):
+                item[key] = [dict(_fields(s, SOURCE_FIELDS, 300), text=s.get('text', ''),
+                             excerpt_only=bool(s.get('truncated'))) for s in result[key] if isinstance(s, dict)]
+            else:
+                item[key] = compact_sources(result[key], limit=2600 if recent else 650,
+                                            count=4 if recent else 2, excerpt=800 if recent else 80)
+    if result.get('url'):
+        item.update(_fields(result, SOURCE_FIELDS, 200))
+        item['text'] = result.get('text', '') if preserve_read else result.get('text', '')[:1800 if recent else 160]
+        item['excerpt_only'] = len(result.get('text', '')) > len(item['text'])
+    if 'items' in result:
+        item['items'] = [_fields(r, ('id', 'question', 'status', 'next_action', 'ts_code', 'name',
+                      'symbol', 'ticker', 'year'), 500) for r in result.get('items', [])[:12] ]
+    if isinstance(result.get('coverage'), dict):
+        item['coverage'] = _fields(result['coverage'], ('queries', 'web_sources', 'web_bodies',
+                        'pdf_pages', 'search_calls', 'search_results', 'body_sources', 'status'))
+    if result.get('methods'):
+        item['methods'] = deepcopy(result['methods'])
+    return item if preserve_read else _fit(item, 3400 if recent else 1000)
+
+
+def compact_tool_results(results, max_chars=10000):
+    """Deduplicate identical observations but retain errors and artifact status."""
+    seen, unique = {}, []
+    preserved_read = False
+    for index, row in reversed(list(enumerate(results or []))):
+        signature = hashlib.sha256(json.dumps({'tool': row.get('tool'), 'result': row.get('result'),
+                       'validation_feedback': row.get('validation_feedback'), 'error': row.get('error')},
+                       ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
+        if signature in seen:
+            seen[signature]['repeated_observations'] = seen[signature].get('repeated_observations', 1) + 1
+            continue
+        item = _fields(row, ('tool', 'reused_from_step_id', 'validation_feedback', 'error'), 1200)
+        item['_context_order'] = index
+        if 'result' in row:
+            full_read = not preserved_read and row.get('tool') in ('read_document', 'read_public_pdf', 'read_webpage', 'read_web_page')
+            read_result = row.get('result') or {}
+            has_body = isinstance(read_result, dict) and (str(read_result.get('text') or '').strip() or any(
+                isinstance(source, dict) and str(source.get('text') or '').strip()
+                for key in ('snippets', 'results') for source in read_result.get(key, [])))
+            full_read = bool(full_read and has_body and not read_result.get('error') and
+                             read_result.get('status') not in ('error', 'failed', 'excluded', 'excluded_after_cutoff', 'needs_ocr'))
+            item['result'] = _tool_result(row['result'], len(unique) < 2, full_read)
+            if full_read:
+                item['full_read_observation'] = True
+                preserved_read = True
+        if row.get('repeated_observations'):
+            item['repeated_observations'] = row['repeated_observations']
+        seen[signature] = item
+        unique.append(item)
+    # Old successful artifacts and errors are more important than old read excerpts.
+    important = [r for r in unique[2:] if r.get('error') or (isinstance(r.get('result'), dict) and
+                 (r['result'].get('error') or r['result'].get('artifact') not in (None, 'document_read', 'document_search', 'web_search')))]
+    ordered = unique[:2] + important + [r for r in unique[2:] if r not in important]
+    def state_record(row):
+        result = row.get('result')
+        return bool(row.get('error') or (isinstance(result, dict) and (result.get('error') or
+                    result.get('artifact') not in (None, 'document_search', 'document_read', 'web_search'))))
+
+    # Older side-effect outcomes remain a small ledger even if a new PDF needs
+    # most of this input. This prevents a short context from implying a report,
+    # attachment or valuation was never saved.
+    for row in ordered[2:]:
+        if not state_record(row) or not isinstance(row.get('result'), dict):
+            continue
+        original = row['result']
+        row['result'] = _fields(original, ('artifact', 'run_id', 'revision', 'report_revision', 'id',
+              'document_id', 'proposal_id', 'status', 'state', 'error', 'method', 'summary', 'note'), 250)
+        for key in ('document', 'proposal', 'result'):
+            if isinstance(original.get(key), dict):
+                row['result'][key] = _fields(original[key], ('id', 'run_id', 'title', 'method', 'state', 'status'), 150)
+        row['context_summary'] = True
+    protected = [r for r in ordered if r.get('full_read_observation') or r.get('validation_feedback') or state_record(r)]
+    ordinary = [r for r in ordered if r not in protected]
+    bounded = _fit(ordinary, max(500, max_chars - size(protected)))
+    if not isinstance(bounded, list):
+        bounded = []
+    bounded += protected
+    bounded.sort(key=lambda item: item['_context_order'])
+    for item in bounded:
+        item.pop('_context_order', None)
+    return bounded
+
+
+def compact_research_plan(plan, max_chars=6000):
+    result = deepcopy(plan or {})
+    result['pending_questions'] = [_question(q) for q in result.get('pending_questions', [])[:5]]
+    # The original request already has its own top-level field.
+    result.pop('original_request', None)
+    result['previous_pending'] = [_clip(p, 350) for p in result.get('previous_pending', [])[:8]]
+    pending = result.pop('pending_questions')
+    result = _fit(result, max(500, max_chars - size(pending)))
+    result['pending_questions'] = pending
+    return result
+
+
+def compact_payload(payload, max_chars=35000):
+    """Final next-decision projection; policy and execution fields stay intact."""
+    result = deepcopy(payload)
+    result['tool_results'] = compact_tool_results(result.get('tool_results', []))
+    result['conversation'] = compact_conversation(result.get('conversation', []))
+    result['research_plan'] = compact_research_plan(result.get('research_plan', {}))
+    result['free_research_sources'] = compact_sources(result.get('free_research_sources', []), 1800, 5, 350)
+    result['proposed_scenarios'] = _fit(list(reversed(result.get('proposed_scenarios', []))), 2000)
+    # bounded_context already projects its input; preserve the active inventory.
+    result['context_compaction'] = {'applied': True, 'note': '完整记录保存在研究中；旧报告、修订历史和重复工具结果不重复发送。'}
+    # Shrink only evidence/old prose blocks; never truncate active constraints,
+    # original_request, available tools, model budgets or product capabilities.
+    for field, floor in (('context', 7000), ('tool_results', 3500), ('conversation', 2000),
+                         ('research_plan', 3500), ('free_research_sources', 500), ('proposed_scenarios', 500)):
+        excess = size(result) - max_chars
+        if excess <= 0:
+            break
+        current = size(result.get(field))
+        target = max(floor, current - excess - 100)
+        if field == 'tool_results':
+            result[field] = compact_tool_results(result[field], target)
+        elif field == 'conversation':
+            result[field] = compact_conversation(result[field], target)
+        elif field == 'research_plan':
+            result[field] = compact_research_plan(result[field], target)
+        elif field == 'context' and isinstance(result.get(field), dict):
+            coverage = result[field].pop('question_coverage', None)
+            result[field] = _fit(result[field], max(1000, target - size(coverage)))
+            result[field]['question_coverage'] = coverage
+        else:
+            result[field] = _fit(result.get(field), target)
+    return result

@@ -64,6 +64,7 @@ def expire_conversation(cid, turn_id, deadline_at=None):
         run = json.loads(run_row[0]) if run_row else None
         chat.update(state='failed', stop_reason='time_limit', budget_exhausted=exhausted,
                     cancel_requested=False, updated_at=stopped_at)
+        store.finalize_budget_usage(chat)
         for step in chat.get('steps', []):
             if step.get('turn_id') == turn_id and step.get('state') == 'running':
                 step.update(state='failed', finished_at=stopped_at, stop_reason='time_limit',

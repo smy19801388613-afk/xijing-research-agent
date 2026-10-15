@@ -91,29 +91,36 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
     second_limit = max(first_limit, second_limit)
     budget=execution_budget.current()
     if budget:
-        cap=budget['generation_tokens']
-        first_limit=min(first_limit,cap)
-        # The selected ceiling also bounds the recovery request. Ordinary short
-        # decisions can use less; a long reasoning draft may recover up to it.
-        second_limit=cap if reasoning else min(second_limit,cap)
+        # This protocol ceiling is independent from the turn's *cumulative*
+        # allowance. Admission below includes every request's input and output.
+        second_limit=MAX_GENERATION_TOKENS if reasoning else second_limit
     shared_deadline=execution_budget.deadline()
     if shared_deadline is not None:
         deadline=min(deadline,shared_deadline) if deadline is not None else shared_deadline
     answer_budget=min(max_tokens,first_limit)
     attempts = []
     actual_limit = first_limit
+    active_reservation = None
+
+    def settle_current(status):
+        nonlocal active_reservation
+        if active_reservation is not None:
+            reservation, active_reservation = active_reservation, None
+            execution_budget.settle(reservation, attempts[-1].get('usage', {}) if attempts else {}, status=status)
 
     def metadata(status):
         return {"model": cfg["model"], "provider": cfg["provider"], "connection_id": cfg["id"],
             "reasoning_enabled": thinking, "status": status,
             "requested_output_tokens": max_tokens, "actual_limit": actual_limit,
-            "execution_generation_cap": budget['generation_tokens'] if budget else None,
+            "execution_generation_cap": MAX_GENERATION_TOKENS if budget else None,
+            "execution_token_usage": execution_budget.snapshot(),
             "generation_limit_scope": "reasoning_and_answer" if thinking or cfg["provider"] == "openai" else "provider_completion",
             "elapsed_ms": int((time.monotonic() - started) * 1000),
             "attempt_count": len(attempts), "attempts": list(attempts),
             "usage": attempts[-1].get("usage", {}) if attempts else {}, "usage_total": _usage_total(attempts)}
 
     def fail(message, status):
+        settle_current(status)
         diagnostics = metadata(status)
         competition.audit("model_failure", diagnostics=diagnostics)
         raise ProviderError(message, diagnostics) from None
@@ -146,6 +153,11 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
                 "Generate a fresh, complete JSON object from the original inputs. Be concise: remove repetition, "
                 "use short exact evidence quotes, preserve required fields and material uncertainty. "
                 "Do not continue or refer to the discarded response, invent facts, or claim unfinished work completed.")
+        competition.check_network(cfg["base"] + endpoint, "model")
+        active_reservation = execution_budget.reserve(
+            execution_budget.estimate_input_tokens(current_prompt, message['content']), actual_limit)
+        if active_reservation:
+            actual_limit = active_reservation['output_tokens']
         if cfg["protocol"] == "anthropic":
             body = {"model": cfg["model"], "system": current_prompt, "messages": [message], "max_tokens": actual_limit}
         else:
@@ -155,7 +167,6 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
             if cfg["provider"] == "deepseek":
                 body["thinking"] = {"type": "enabled" if thinking else "disabled"}
                 if not thinking: body["temperature"] = 0.1
-        competition.check_network(cfg["base"] + endpoint, "model")
         competition.audit("model_request", model=cfg["model"], protocol=cfg["protocol"], system=current_prompt,
             payload=payload, max_tokens=actual_limit, answer_budget=max_tokens, attempt=index)
         attempt = {"attempt": index, "actual_limit": actual_limit, "status": "requesting", "usage": {}}
@@ -168,6 +179,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
             response.raise_for_status()
             data = response.json()
             attempt["usage"] = _safe_usage(data.get("usage"))
+            settle_current('received')
             if cfg["protocol"] == "anthropic":
                 content = "".join(block["text"] for block in data.get("content", []) if block.get("type") == "text")
                 finish_reason = data.get("stop_reason")
@@ -192,7 +204,7 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
                 competition.audit("model_attempt", diagnostics=attempt)
                 if index == 1:
                     continue
-                fail("模型两次生成仍达到输出或上下文上限，未采用不完整草稿；可调整生成额度、减少单次研究问题或分段更新报告", "length_exhausted")
+                fail("模型两次生成仍达到单次输出或上下文上限，未采用不完整草稿；请减少单次研究问题或分段更新报告", "length_exhausted")
             if not completed:
                 attempt["status"] = "interrupted"
                 fail("模型服务中断了本次生成，未采用不完整草稿；已有证据仍保留", "provider_interrupted")
@@ -207,6 +219,10 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
             return value, result_meta
         except competition.PolicyError: raise
         except httpx.HTTPStatusError as error:
+            try:
+                attempt['usage'] = _safe_usage(error.response.json().get('usage'))
+            except (ValueError, TypeError, AttributeError):
+                pass
             attempt.update(status="http_error", http_status=error.response.status_code,
                            elapsed_ms=int((time.monotonic() - attempt_started) * 1000))
             fail(f"模型接口返回 HTTP {error.response.status_code}；请检查当前服务的密钥、模型名、接口协议和输出额度", "http_error")
@@ -220,6 +236,11 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
         except (ValueError, KeyError, IndexError, TypeError, AttributeError):
             attempt.update(status="invalid_response", elapsed_ms=int((time.monotonic() - attempt_started) * 1000))
             fail("模型调用超时、请求失败或未返回有效 JSON；已保留财务证据，不生成无依据结论", "invalid_response")
+        finally:
+            # Cancellation and deadline checks may interrupt before fail(). A
+            # killed process instead leaves its persisted reservation for the
+            # cancellation/watchdog handler to label as an uncertain estimate.
+            settle_current(attempt.get('status', 'interrupted'))
 
 
 def list_models(profile_id):
