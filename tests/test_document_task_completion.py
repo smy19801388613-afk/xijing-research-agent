@@ -140,3 +140,39 @@ def test_false_background_promise_is_revised_without_tool_invention(chat, monkey
 def test_method_questions_have_no_execution_checklist(chat, prompt):
     current = begin(chat, prompt)
     assert resume_plan.document_checks(current) == []
+
+
+def test_bank_quarter_rows_do_not_satisfy_annual_comparison(chat):
+    current = begin(chat, REQUEST.replace('归母净利润', '归母净利'))
+    text = ('2025年 2024年 2023年\n总资产 13070523 12152036 11028483\n'
+            '2025年 2025年 2025年 2025年\n第一季度 第二季度 第三季度 第四季度\n'
+            '按季度披露的经营业绩指标\n营业收入 83751 86218 81451 86112\n'
+            '归属于本行股东的净利润 37286 37644 38842 36409\n'
+            '经营活动产生的现金流量净额 95026 39435 41673 275323')
+    store.update_conversation(chat['id'], lambda c: c['steps'].append({
+        'id': 'quarter', 'turn_id': current['turn_id'], 'tool': 'read_document', 'state': 'completed',
+        'arguments': {'document_id': 'annual', 'page': 15},
+        'result': {'snippets': [snippet(15, text)]}}))
+    assert not any(c['read_candidate_available'] for c in resume_plan.document_checks(store.get_conversation(chat['id'])))
+    annual = ('2025年 2024年 2023年\n营业收入 337532 337488 339123\n'
+              '归属于本行股东的净利润 150181 148391 146602\n'
+              '经营活动产生的现金流量净额 451457 447023 200000')
+    store.update_conversation(chat['id'], lambda c: c['steps'].append({
+        'id': 'annual-summary', 'turn_id': current['turn_id'], 'tool': 'read_document', 'state': 'completed',
+        'arguments': {'document_id': 'annual', 'page': 14},
+        'result': {'snippets': [snippet(14, annual + '\n' + text)]}}))
+    assert all(c['read_candidate_available'] for c in resume_plan.document_checks(store.get_conversation(chat['id'])))
+
+
+def test_repeated_read_redirects_to_known_unread_target(chat):
+    current = begin(chat)
+    add_read(current, 54)
+    store.update_conversation(chat['id'], lambda c: c['steps'].append({
+        'id': 'search', 'turn_id': current['turn_id'], 'tool': 'search_documents', 'state': 'completed',
+        'arguments': {'queries': ['营业收入', '归母净利润', '经营现金流']},
+        'result': {'snippets': [snippet(6), snippet(60), snippet(64)]}}))
+    current = store.get_conversation(chat['id'])
+    action = resume_plan.repeated_document_recovery(current, None, {'document_id': 'annual', 'page': 54})
+    assert action['tool'] == 'read_document' and action['arguments']['page'] == 6
+    assert resume_plan.repeated_document_recovery(current, None, {'document_id': 'annual', 'page': 6}) is None
+    assert resume_plan.repeated_document_recovery(current, None, {'document_id': 'annual', 'page': 54, 'count': 2}) is None

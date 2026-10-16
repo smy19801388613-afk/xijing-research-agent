@@ -37,8 +37,8 @@ function Show-ResearchServer($health) {
         finally { $hasher.Dispose() }
     }
     $openUrl = "$serviceUrl/?v=$($health.version)&ui=$pageId"
-    try { $Host.UI.RawUI.WindowTitle = "Research Desk v$($health.version)" } catch {}
-    Write-Host "Research Desk v$($health.version) is running." -ForegroundColor Magenta
+    try { $Host.UI.RawUI.WindowTitle = "Xijing AI v$($health.version)" } catch {}
+    Write-Host "Xijing AI v$($health.version) is running." -ForegroundColor Magenta
     Write-Host "Project: $projectRoot"
     Write-Host "Open: $openUrl"
     if (-not $NoBrowser) { Start-Process $openUrl }

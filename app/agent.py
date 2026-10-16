@@ -12,16 +12,16 @@ from . import store,securities,valuation,research,documents,disclosures,deep_res
 from .config import DATA
 from .schemas import RunRequest
 from .providers import model_json,ProviderError
-from .turn_constraints import constraints, enforce, latest_user, prohibited_reason, effective_rules, task_request, task_steps
+from .turn_constraints import constraints, enforce, latest_user, prohibited_reason, effective_rules, task_request, task_steps, NO_PER_SHARE
 from .tool_capabilities import TOOLS, LABELS
 from .evidence_policy import source_fingerprint
-from .report_state import report_valuation_status
+from .report_state import report_valuation_status, report_identity, assert_report_base, dependency_snapshot, dependency_fingerprint, link_report_valuations, valuation_snapshot
 from .fact_state import claims, enrich
 from . import questions, execution_budget, resume_plan
 from .coverage_view import turn_observation, coverage_notice
-from . import agent_context, search_progress
+from . import agent_context, search_progress, task_contract, report_edit, review_state
 
-SYSTEM="""你是研序，一位与用户合作的A股投研助手。使用中文。主动讨论研究思路、方法适用性、反证和还需取得的资料。
+SYSTEM="""你是析鲸AI，一位与用户合作的A股投研助手。使用中文。主动讨论研究思路、方法适用性、反证和还需取得的资料。
 你可以决定调用哪些工具，多次观察结果后再继续，也可以直接回答或追问。不能假装已经执行工具。
 每次仅返回一个 JSON 对象：
 调用工具 {"action":"tool","tool":"工具名","arguments":{...},"message":"一句简短的公开操作说明"}
@@ -50,9 +50,11 @@ OCR 标记为 windows_ocr，金额、标点和数字可能误识别。不要猜�
 如果用户希望你提出一组假设，用 propose_valuation 给出完整、显式标记为待确认的探索方案。方案会显示成可采用的卡片。解释假设依据与局限，不把建议参数当成已核验事实。
 用户明确说采用方案后，用 calculate_proposal 按方案ID执行，不必要求用户重抄数字。存在多个方案时先明确选择，不能自行猜测。
 用户说其余不变时，可以省略 quotes 但只能沿用当前同方法上一版本的同字段值。用户尚未给参数时先解释并提出待确认的建议；未确认前不能执行估值。
-PE、PS 的历史基数由程序从已核验事实读取，不能替换。DCF 的 FCFF 不能拿经营现金流代替。净债务等调整项或股本缺失时，不编造零值或每股价格。
+PE、PS 的历史基数由程序从当前无冲突、可用于计算的财务事实读取，不能替换；接口单源允许计算，但不能因此称为已核验或双源核验。DCF 的 FCFF 不能拿经营现金流代替。净债务等调整项或股本缺失时，不编造零值或每股价格。
 用户要求首次生成研究结果、联网深入研究或保存新报告时，调用 build_investment_memo；会自主检索、查阅、形成判断、反方审阅并保存新版本。这已经是授权，不要再问是否保存。普通讨论不擅自覆盖报告。
+首次完整深度研究不必在外层逐条答完全部研究问题：build_investment_memo 内部会完成检索、原文阅读、问题答案、撰写和反方审阅。明确研究范围并复用已有事实后应尽早调用它，给撰写和审阅保留 Token 与时间，避免外层先做一遍完整查证、内部再重复。用户明确指定必须先完成的核验仍须先完成。已授权续查应依据实际剩余证据缺口选择 build 或 refine；需新证据才查新资料，已有原文足够的纠正使用 refine，不能因已有报告就跳过未完成事项。
 小幅修改已有简版报告可用 revise_report；已读资料充分、只需根据原文改写深度报告时用 refine_investment_memo，避免重复联网；需要新证据或首次生成完整报告时用 build_investment_memo。两者都保留版本和用户估值。
+用户指定先补读再修订已有报告时，按需先取得缺少的证据，之后用 refine_investment_memo；不能仅因还有研究问题待回答而重新执行整套 build_investment_memo。续接未保存报告时复用工具提供的未发布草稿并定点纠错。
 仅旧版 revise_report 的简版memo格式为 {title,summary,theses:[{title,body,fact_ids:[已有fact或calculation id],counter_evidence,invalidate_if}],questions:[字符串],limitations:[字符串]}，正文只谈三项财务事实且不复述金额比率。
 完整业务、产品、最新经营或估值研究用 build_investment_memo；已有深度报告且不需补充新资料时用 refine_investment_memo。二者支持PDF页/网页/财务/估值分别引用，不能用空fact_ids把原文硬塞进简版报告。
 报告每个论点要有引用、反证、失效条件；估值假设与历史事实保持区分。
@@ -60,7 +62,7 @@ PE、PS 的历史基数由程序从已核验事实读取，不能替换。DCF �
 多指标原文任务必须逐项覆盖用户要求的指标、期间、同比、单位、口径和页码。research_plan.document_checks 只是原文候选行的覆盖提示，不是财务核验结论。已有年报仍可查阅时，不得读到一个指标就以“下一步我继续”结束；respond 会结束本轮，不会有后台继续执行。确实缺资料、存在必须澄清的歧义或预算不足时，可诚实报告部分完成及具体阻碍，不得混用主体、期间或合并/母公司数字来填满清单。
 研究完成度以question_coverage为准：支持状态必须有实际原文摘录及日期，搜索摘要/来源数量不能算问题回答完成。每项证据需说明如何回答该问题，支持关系仍需研究员复核。
 完整公司研究先复用已有research_questions、未回答问题和next_action；必要时建立3–5个关键问题。用户只问一个问题时不强制扩展；禁止修改问题记录时只讨论，不调用问题写入工具。
-user_constraints是本轮实际约束，优先于旧对话；available_tools只列本轮可用工具。original_request是续查原任务，不要把“继续未完成部分”当成全新研究或重新请求保存授权。
+user_constraints是本轮实际约束，优先于旧对话；available_tools只列本轮可用工具。task_contract.active_request是本轮有效任务，completion规定当前交付范围。历史原任务仅用于追溯，用户缩小范围后不再强制完成旧义务；纯“继续”继承当前有效范围。
 续查的tool_results已包含成功结果，应直接复用。research_plan 列出本任务尚未履行的搜索、原文阅读和关键问题缺口；已有报告不能代替这些工作。优先用已保存原文核对 pending_questions 并更新答案，需要新证据时再执行定向检索或原文阅读，不要仅重复上一轮答复。报告输入不变时不重复保存；新原文或问题答案改变报告依据时，可在原保存授权内更新一次，但本轮明确禁止改报告仍须遵守。不重复取数。若用户明确要求保存或更新，直接执行并说明实际版本，不要重复确认。
 可用工具：
 plan_research_questions: {questions:[{question:具体问题,completion_criteria:所需证据}]}。建立细分问题，不覆盖旧问题；把产品存在、收费合同、分项收入、回款拆开。
@@ -106,37 +108,11 @@ def with_web_citations(message,results):
                 title=re.sub(r'[\[\]\r\n]','',str(s.get('title') or '网页来源'))[:130]
                 links[url]=title+('（仅搜索摘要）' if not s.get('text') else '')
     missing=[f'[{title}]({url})' for url,title in links.items() if url not in message]
-    return message+('\n\n本轮联网来源：\n'+'\n'.join('- '+s for s in missing[:8]) if missing else '')
+    return message+('\n\n网络来源：\n'+'\n'.join('- '+s for s in missing[:8]) if missing else '')
 
 def requested_artifacts(text):
-    """Postconditions for clear edit requests; the model still selects its tools."""
-    required=set()
-    if not re.search(r"怎么|如何|是否|能否|不要|暂不|先不",text):
-        if re.search(r"(?:查找|找到|下载|获取|补充|找).{0,20}(?:年报|年度报告)|补充数据",text): required.add("document")
-        if re.search(r"(?:读取|阅读|查阅|检索|查看).{0,20}(?:PDF|pdf|文件|年报)|(?:根据|从).{0,20}(?:上传|PDF|pdf).{0,20}(?:查|找|分析)",text): required.add("document_search")
-    for clause in re.split(r"[。；\n，,]",text):
-        reading=re.search(r"(?:读取|阅读|查阅).{0,60}第\s*\d+\s*页|逐页(?:读取|阅读|查阅)",clause)
-        if reading and not re.search(r"不|别|无需|怎么|如何|是否|能否",clause[:reading.start()]): required.add("document_read")
-    valuation_intent=bool(re.search(r"估值|情景|倍数|\b(?:PE|PS|PB|DCF|DDM|EBITDA)\b",text,re.I))
-    if valuation_intent and re.search(r"(?:整理|提出|生成|设计|给出).{0,30}(?:方案|参数)|方案卡片",text):
-        if not re.search(r"不要.{0,8}(?:方案|卡片)|暂不.{0,8}(?:方案|卡片)",text):
-            required.add("proposal")
-    for clause in re.split(r"[。；;\n，,、]",text):
-        report=re.search(r"(?:生成|撰写|更新|修改|修订|改写|重写|写进|写入|保存).{0,18}(?:报告|研报|底稿|备忘录|研究结果)|(?:报告|研报|底稿|备忘录).{0,8}(?:更新|修改|修订|改为|改成|重写|保存)",clause)
-        if report:
-            prefix=clause[max(0,report.start()-8):report.start()]
-            if not re.search(r"不要|暂不|先不|不必|无需|别|如何|怎么|是否",prefix+report.group(0)[:3]) and not re.search(r"不(?:再|直接|自动|擅自)?\s*$",prefix):
-                required.add("report")
-        calculation=re.search(r"重新计算|重算|计算并保存|实际计算|直接计算",clause)
-        if valuation_intent and calculation and not re.search(r"不要|暂不|先不|不必|无需|别|不(?:再|直接|自动|擅自)?\s*$",clause[max(0,calculation.start()-8):calculation.start()]):
-            required.add("valuation")
-    limits=constraints(text)
-    if limits['no_tools']: return set()
-    if limits['no_report']: required.discard('report')
-    if limits['no_calculation'] or limits['no_valuation']: required.discard('valuation')
-    if limits['no_valuation']: required.discard('proposal')
-    if limits['no_network']: required.discard('document')
-    return required
+    return task_contract.requested_artifacts(text)
+
 
 
 def with_document_citations(message,results):
@@ -151,7 +127,7 @@ def with_document_citations(message,results):
                 title=re.sub(r'[\[\]\r\n]', '',str(snippet.get('title','PDF')))[:100]
                 pages[url]=f"{title} · 第 {snippet['page']} 页"
     missing=[f'[{label}]({url})' for url,label in pages.items() if url not in message]
-    return message+('\n\n本轮查阅来源（含检索片段）：\n'+'\n'.join('- '+link for link in missing[:12]) if missing else '')
+    return message+('\n\nPDF来源（含检索片段）：\n'+'\n'.join('- '+link for link in missing[:12]) if missing else '')
 
 
 def document_unit_feedback(message,results):
@@ -178,6 +154,47 @@ def document_unit_feedback(message,results):
                 return f"PDF 第 {s['page']} 页表头为人民币元，股本余额 {format(max(conflict),'f')} 的单位是元，不能直接写成股数。需查找股份总数及其单位；缺少明确股数依据时写待核实，不得假定每股面值为1元。"
     return ''
 
+
+def response_amount_feedback(message, run, results):
+    """Check only observed/cited currency rows, never an unbounded web catalog."""
+    from .financial_units import AMOUNT, check_text, source_amounts
+    if not AMOUNT.search(message): return ''
+    refs = {s['id']: s for s in run.get('research_sources', []) if s.get('id') and
+            deep_research.citable_source(s, 'inference', run) and
+            (s.get('read_status') or s.get('extraction')) not in ('ocr', 'windows_ocr')}
+    selected = {sid for sid, source in refs.items() if sid in message or
+                (source.get('url') and source['url'] in message)}
+    observed = [s for row in results for s in agent_context._read_sources(row)]
+    locations = {(s.get('document_id'), s.get('page')) for s in observed if s.get('document_id')}
+    urls = {(s.get('url'), s.get('page')) for s in observed if s.get('url')}
+    selected.update(sid for sid, source in refs.items() if
+                    (source.get('document_id') and (source['document_id'], source.get('page')) in locations) or
+                    (source.get('url'), source.get('page')) in urls)
+    if any(isinstance(row.get('result'), dict) and row['result'].get('artifact') == 'report' and
+           row['result'].get('revision') == run.get('report_revision') for row in results):
+        selected.update(s.get('id') for s in (run.get('memo') or {}).get('sources', []) if isinstance(s, dict))
+    amounts = [value for sid in selected if sid in refs for value in source_amounts(refs[sid])]
+    issues = check_text(message, amounts, field='assistant_response')
+    return '；'.join(f"{i['claim']} 与来源 {i['source_id']} 的 {i['source_label']} {i['source_amount']} 不符，"
+                    f"应约为 {i['expected']}（差 {i['factor']} 倍）" for i in issues[:5])
+
+
+def assumption_changes(text,aliases):
+    """Read explicit edit targets, never mistake the old value in 'from A to B'."""
+    changes={}
+    for clause in re.split(r'[。；;\n，,]|但是|但',text):
+        for change in re.finditer(r'(?:改为|改成|调整为|调整成|设为)\s*([-+]?\d+(?:\.\d+)?)',clause):
+            prefix=clause[:change.start()]
+            matches=[(m.end(),len(alias),key) for key,names in aliases.items() for alias in names
+                     for m in re.finditer(re.escape(alias),prefix,re.I)]
+            if not matches: continue
+            _,_,key=max(matches)
+            if change.start()-max(m[0] for m in matches)>40: continue
+            negative=bool(re.search(r'不要|不得|不能|无需|不必|禁止|别|暂不|先不|不再|不是|不使用|不采用|不调整|不改|不\s*$',prefix))
+            changes.setdefault(key,[]).append({'value':Decimal(change[1]),'quote':clause.strip(),'negative':negative})
+    return changes
+
+
 def grounded_assumptions(chat,method,assumptions,quotes):
     texts=[m["content"] for m in chat["messages"] if m["role"]=="user"]
     latest=task_request(chat)
@@ -188,6 +205,7 @@ def grounded_assumptions(chat,method,assumptions,quotes):
         "cost_of_equity_pct":["股权成本"],"years":["预测期","预测年限"],"dividend_per_share":["每股股利","每股分红"]}
     aliases["multiple"]={"pe":["PE","市盈率","倍数"],"ps":["PS","市销率","倍数"],
         "pb":["PB","市净率","倍数"],"ev_ebitda":["EV/EBITDA","倍数"]}.get(method,[])
+    edits=assumption_changes(latest,aliases)
     run=store.get_run(chat["run_id"])
     previous=next((v for v in reversed(run.get("valuation_history",[])) if v["method"]==method),None)
     for key,raw in assumptions.items():
@@ -196,6 +214,16 @@ def grounded_assumptions(chat,method,assumptions,quotes):
         try: value=Decimal(str(raw))
         except Exception: raise ValueError("估值参数必须是数字") from None
         if not value.is_finite(): raise ValueError("估值参数必须是有限数字")
+        targets=[item for item in edits.get(key,[]) if not item['negative']]
+        target_values={item['value'] for item in targets}
+        if len(target_values)>1: raise ValueError('参数 '+key+' 的本轮修改目标存在冲突，请先明确采用哪个新值，不能自行选择。')
+        if targets:
+            if value not in target_values:
+                raise ValueError('参数 '+key+' 未采用用户本轮明确修改后的新值。原句：'+targets[-1]['quote'][:300])
+            quotes[key]=targets[-1]['quote']
+            continue
+        if any(item['negative'] and item['value']==value for item in edits.get(key,[])):
+            raise ValueError('参数 '+key+' 的该数值出现在否定修改请求中，不能当作已授权的新假设。')
         if quote and isinstance(quote,str) and any(quote in t for t in texts):
             numbers=re.findall(r"[-+]?\d+(?:\.\d+)?",quote.replace(",","").replace("，"," "))
             if any(Decimal(n)==value for n in numbers): continue
@@ -214,14 +242,51 @@ def grounded_assumptions(chat,method,assumptions,quotes):
             quotes[key]=confirmed
             continue
         if previous and key in previous["assumptions"] and Decimal(previous["assumptions"][key])==value: continue
-        raise ValueError("参数 "+key+" 缺少可核对的依据。若用户已明确给出，请原样引用其消息并重试一次，不要要求重复确认；否则先讨论数值。")
+        candidates=[c.strip() for c in re.split(r'[。；;\n，,]',latest) if any(re.search(re.escape(a),c,re.I) for a in aliases.get(key,[]))]
+        raise ValueError("参数 "+key+" 的用户原话引用不匹配。测试增速或倍数是用户假设，不要求年报提供该假设；必须原样引用包含数值的已授权片段。"
+                         +("本轮相关原句："+'；'.join(candidates)[:350] if candidates else "本轮未找到对应明确数值，请先提出待确认方案。"))
+
+def valuation_change_requested(text):
+    """Only an affirmative change to valuation inputs invalidates adoption."""
+    parameters=r'PE|PB|PS|DCF|DDM|EBITDA|估值|参数|方案|情景|倍数|增长|增速|股本|股数|净资产|FCFF|WACC|资本成本|股权成本|预测期|预测年限|每股股利|分红|桥接|净债务'
+    other_object=r'(?:研究)?报告|研报|备忘录|正文|标题|研究问题'
+    for clause in re.split(r'[。；;\n，,]|但是|但',text):
+        for change in re.finditer(r'改成|改为|修改|调整|设为',clause):
+            before=clause[:change.start()];after=clause[change.end():]
+            if re.search(r'(?:不要|不得|不能|无需|不必|禁止|别|暂不|先不|不再|不)(?:擅自|自行|再|进行|任何|作出)?\s*$',before):
+                continue
+            if re.match(r'\s*(?:这份|当前|现有|已有)?\s*(?:'+other_object+r')',after): continue
+            nearby=before[-24:]+after[:35]
+            if re.search(parameters,nearby,re.I):
+                # "把报告改为..." edits prose even if the prose mentions PE.
+                if re.search(r'(?:'+other_object+r')\s*$',before) and not re.search(parameters,before[-12:],re.I): continue
+                return True
+    return False
+
+
+def enforce_valuation_scope(chat,name,args):
+    """Enforce output scope even for cached or already accepted proposals."""
+    if not effective_rules(chat).get('no_per_share'): return
+    if name in ('propose_valuation','calculate_valuation'):
+        value=args
+    elif name=='calculate_proposal':
+        value=next((p for p in chat.get('proposals',[]) if p.get('id')==args.get('proposal_id')
+                    and p.get('run_id')==chat.get('run_id')), {})
+    else: return
+    assumptions=value.get('assumptions',{})
+    shares=isinstance(assumptions,dict) and assumptions.get('shares_100m') not in (None,'')
+    if value.get('method')=='ddm' or shares:
+        raise ValueError('本轮不计算每股价值；请省略股本参数，只计算总权益或企业价值。'
+                         '包含股本或采用每股股利法的既有方案不能原样执行，须先提出符合本轮范围的新方案，不能擅自改动已确认参数。')
+
 
 @competition.traced("tool")
 def tool(chat,name,args,model_input_run=None):
     competition.audit("tool_arguments",tool=name,arguments=args,conversation_id=chat.get("id"),run_id=chat.get("run_id"))
     # Reload the human turn; neither stale context nor model arguments grant permission.
     if chat.get('id'): chat=store.get_conversation(chat['id'])
-    enforce(chat,name)
+    enforce(chat,name,args)
+    enforce_valuation_scope(chat,name,args)
     if competition.POLICY["enabled"] and not competition.POLICY["retrieval_origins"] and name in ("web_search","read_webpage","read_web_page","read_public_pdf","fetch_annual_report"):
         raise competition.PolicyError("比赛模式只用指定材料，请读取现有资料或说明缺口")
     if name=="search_company": return securities.search(str(args.get("query",""))[:80])
@@ -283,6 +348,8 @@ def tool(chat,name,args,model_input_run=None):
     if name=="plan_research_questions": return questions.plan(run['id'],args.get('questions',[]))
     if name=="update_research_question": return questions.update(run['id'],[args],'model')
     if name in ("build_investment_memo","refine_investment_memo"):
+        if name=='build_investment_memo' and run.get('memo') and report_edit.resolve_scope(chat,run['memo']).limited:
+            raise ValueError('本轮仅授权局部修改，请使用 refine_investment_memo 按指定范围修订；不可用完整深研重写其他字段')
         def progress(label):
             def change(c):
                 active=next((s for s in reversed(c["steps"]) if s["state"]=="running" and s["tool"]==name),None)
@@ -291,7 +358,13 @@ def tool(chat,name,args,model_input_run=None):
                     active.setdefault("progress",[]).append({"time":store.now(),"label":label})
             store.update_conversation(chat["id"],change)
         execute_memo=deep_research.refine if name=='refine_investment_memo' else deep_research.build
-        result=execute_memo(run["id"],task_request(chat) or str(args.get("question",'')),chat,progress)
+        memo_request=task_request(chat) or str(args.get("question",''))
+        requests=report_requests(chat)
+        if requests:
+            memo_request=('原研究任务：\n' if len(requests)>1 else '')+requests[0]
+            for index,request in enumerate(requests[1:],1):
+                memo_request+=f'\n\n用户补充{index}（对冲突部分以较新的要求为准）：\n'+request
+        result=execute_memo(run["id"],memo_request,chat,progress)
         if name=='build_investment_memo':
             before={s['id']:s for s in run.get('research_sources',[]) if s.get('id')}
             observed=[s for s in store.get_run(run['id']).get('research_sources',[]) if s.get('id') and s!=before.get(s['id'])]
@@ -309,11 +382,12 @@ def tool(chat,name,args,model_input_run=None):
         return {"artifact":"proposal","proposal":proposal,"note":"待用户采用；尚未保存估值结果"}
     if name=="calculate_proposal":
         latest=task_request(chat)
+        approval_text=re.sub(NO_PER_SHARE,'',latest)
         proposal=next((p for p in chat.get("proposals",[]) if p["id"]==args.get("proposal_id") and p["run_id"]==run["id"]),None)
         if not proposal: raise ValueError("未找到当前研究的已展示方案")
-        if re.search(r"(?:不|暂不|先不)(?:采用|确认|同意|计算|执行)|不要.{0,6}(?:采用|计算|执行)",latest) or not re.search(r"采用|确认|同意|按.{0,12}(?:方案|执行)|照.{0,12}方案",latest):
+        if re.search(r"(?:不|暂不|先不)(?:采用|确认|同意|计算|执行)|不要.{0,6}(?:采用|计算|执行)",approval_text) or not re.search(r"采用|确认|同意|按.{0,12}(?:方案|执行)|照.{0,12}方案",approval_text):
             raise ValueError("尚未收到用户采用该方案的明确要求，请先展示方案")
-        if re.search(r"改成|改为|修改|调整|设为",latest):
+        if valuation_change_requested(latest):
             raise ValueError("用户同时提出修改参数，请先更新方案或根据明确输入直接计算，不能原样执行旧方案")
         latest_proposals=[p for p in chat.get("proposals",[]) if p["run_id"]==run["id"] and p["turn_id"]==proposal["turn_id"]]
         most_recent=chat.get("proposals",[])[-1]
@@ -336,6 +410,8 @@ def tool(chat,name,args,model_input_run=None):
         return {"artifact":"valuation","run_id":run["id"],"result":result}
     if name=="revise_report":
         if run["state"] in ("queued","running"): raise ValueError("财务研究尚未完成")
+        if report_edit.resolve_scope(chat,run.get('memo') or {}).limited:
+            raise ValueError('本轮仅授权局部修改，请使用 refine_investment_memo 按指定范围修订；不可替换整份报告')
         candidate=args.get("memo",{})
         skipped_answers=bool(isinstance(candidate,dict) and candidate.get('question_answers') and effective_rules(chat).get('no_question_writes'))
         if skipped_answers: candidate={**candidate,'question_answers':[]}
@@ -344,14 +420,20 @@ def tool(chat,name,args,model_input_run=None):
         input_run=model_input_run if model_input_run and model_input_run.get('id')==run['id'] else run
         memo=deep_research.validate_memo(candidate,input_run) if candidate.get("schema_version")==2 else research.valid_memo(candidate,input_run)
         memo.setdefault('_question_input_snapshot',questions._question_snapshot(input_run,memo))
+        memo['_report_input_identity']=report_identity(input_run)
+        memo['_report_dependency_snapshot']=dependency_snapshot(input_run,memo)
+        memo['review']=review_state.after_refinement((input_run.get('memo') or {}).get('review',{}),input_run.get('report_revision',1))
         note=str(args.get("change_note","根据研究对话更新"))[:500]
         def change(current):
             if current["state"] in ("queued","running"): raise ValueError("研究仍在执行")
+            assert_report_base(current,memo['_report_input_identity'])
             questions.assert_report_input(current,memo)
             if memo.get('question_answers'):
                 questions.apply(current,questions.validate_updates(current,memo['question_answers']))
-            saved_memo=questions.freeze_report(current,memo)
+            saved_memo=questions.freeze_report(current,link_report_valuations(memo,valuation_snapshot(input_run)))
             saved_memo.pop('_question_input_snapshot',None)
+            saved_memo.pop('_report_input_identity',None)
+            saved_memo.pop('_report_dependency_snapshot',None)
             revision=current.get("report_revision",1)
             current.setdefault("memo_revisions",[]).append({"revision":revision,"memo":current.get("memo"),
                 "replaced_at":store.now(),"change_note":note,"conversation_id":chat["id"]})
@@ -364,8 +446,19 @@ def tool(chat,name,args,model_input_run=None):
     raise ValueError("未知工具，请使用工具列表中的名称")
 
 def memo_tool_for_request(name,chat,results):
-    if name!='build_investment_memo' or not chat.get('run_id'): return name
+    if name not in ('build_investment_memo','revise_report') or not chat.get('run_id'): return name
+    rules=effective_rules(chat)
+    if prohibited_reason(rules,name) and prohibited_reason(rules,'refine_investment_memo'):
+        return name
     run=store.get_run(chat['run_id'])
+    try:
+        if run.get('memo') and report_edit.resolve_scope(chat,run['memo']).limited:
+            return 'refine_investment_memo'
+    except ValueError:
+        # Routing is not execution. Let the tool record the scope error so the
+        # assistant can explain it without killing the entire conversation turn.
+        return name
+    if name!='build_investment_memo': return name
     if not run.get('research_sources'): return name
     if resume_plan.plan(chat,run)['pending_obligations'] and not effective_rules(chat)['no_network']:
         return name
@@ -399,21 +492,49 @@ def cacheable_step(step):
 
 
 def report_input_fingerprint(run):
-    """Ignore timestamps, but include new original material and changed answers."""
-    snapshot=questions._question_snapshot(run,{})
-    for question in snapshot['questions'].values(): question.pop('revision',None)
-    value={'request':run.get('request',{}),'questions':snapshot,
-           'sources':{sid:source_fingerprint(source,run) for sid,source in questions.catalog(run).items()},
-           'calculations':run.get('calculations',[]),'valuations':run.get('valuation_history',[])}
-    return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False,default=str).encode()).hexdigest()
+    return dependency_fingerprint(run)
+
+
+
+def report_requests(chat, turn_id=None):
+    """Preserve explicit steering across pure continuations of the same task."""
+    turn_id=turn_id or chat.get('turn_id')
+    contexts=chat.get('turn_contexts',{})
+    ctx=contexts.get(turn_id)
+    if not ctx: return None
+    requests=[]
+    contract=task_contract.current_contract(chat,turn_id)
+    ids=contract.get('obligation_turn_ids') or ctx.get('task_turn_ids',[turn_id])
+    pure=task_contract.PURE_CONTINUATIONS
+    for tid in ids:
+        request=(contexts.get(tid,{}).get('user_text') or next((m.get('content','') for m in
+            chat.get('messages',[]) if m.get('turn_id')==tid and m.get('role')=='user'),'')).strip()
+        if request and request.rstrip('。.!！') not in pure and request not in requests:
+            requests.append(request)
+        if tid==turn_id: break
+    if not requests and (contract.get('active_request') or ctx.get('original_request')):
+        requests.append(contract.get('active_request') or ctx['original_request'])
+    return requests
+
+
+def report_request_fingerprint(chat, turn_id=None):
+    """A correction changes report inputs even if the underlying facts do not."""
+    requests=report_requests(chat,turn_id)
+    return hashlib.sha256(json.dumps(requests,ensure_ascii=False).encode()).hexdigest() if requests is not None else None
 
 
 def report_step_for_input(chat,run):
-    if not run or questions.report_sync(run)['needs_update']: return None
+    candidates=[s for s in reversed(task_steps(chat)) if cacheable_step(s)
+                and not s.get('reused_from_step_id') and s.get('result',{}).get('artifact')=='report']
+    if not candidates or not run or questions.report_sync(run)['needs_update']: return None
     fingerprint=report_input_fingerprint(run)
-    return next((s for s in reversed(task_steps(chat)) if cacheable_step(s)
-                 and s.get('result',{}).get('artifact')=='report'
-                 and s.get('report_input_fingerprint')==fingerprint),None)
+    request_fingerprint=report_request_fingerprint(chat)
+    identity=report_identity(run)
+    return next((s for s in candidates if s.get('result',{}).get('revision')==identity['revision']
+                 and (not s.get('report_output_identity') or s['report_output_identity']==identity)
+                 and s.get('report_input_fingerprint')==fingerprint
+                 and request_fingerprint is not None and
+                 (s.get('report_request_fingerprint') or report_request_fingerprint(chat,s.get('turn_id')))==request_fingerprint),None)
 
 
 def reusable_step(chat, name, args):
@@ -441,9 +562,10 @@ def delivery_state(chat, run, status='completed', observed=None):
     completed=[{'tool':s['tool'],'label':LABELS.get(s['tool'],'完成研究步骤'),'step_id':s.get('id',''),
                 'turn_id':s.get('turn_id')} for s in successful]
     actual=completed_artifacts(successful)
-    if ctx.get('resume_from_turn_id') and 'report' in ctx.get('required_artifacts',[]) and not report_step_for_input(chat,run):
+    required=task_contract.required_artifacts(chat)
+    if ctx.get('resume_from_turn_id') and 'report' in required and not report_step_for_input(chat,run):
         actual.discard('report')
-    pending=[ARTIFACT_LABELS.get(a,a) for a in ctx.get('required_artifacts',[]) if a not in actual]
+    pending=[ARTIFACT_LABELS.get(a,a) for a in required if a not in actual]
     last={}
     for s in steps: last[(s.get('tool'),json.dumps(s.get('arguments',{}),sort_keys=True,ensure_ascii=False))]=s
     for s in last.values():
@@ -502,11 +624,35 @@ def stop_at_deadline(cid,turn_id):
     raise ProviderError('本轮达到执行时间预算，已保留完成的结果')
 
 
+def failed_action_fingerprint(name,args):
+    """Explanatory wording cannot turn the same invalid valuation into progress."""
+    if name in ('propose_valuation','calculate_valuation'):
+        method=str(args.get('method','')).strip().lower()
+        spec=next((m for m in valuation.CATALOG if m['id']==method),None)
+        inputs=args.get('assumptions',{})
+        if isinstance(inputs,dict):
+            allowed={f['key'] for f in spec['fields']} if spec else set(inputs)
+            values={}
+            for key,value in inputs.items():
+                if key not in allowed or value is None or value=='': continue
+                try:
+                    number=Decimal(str(value))
+                    if not isinstance(value,bool) and number.is_finite() and abs(number)<=Decimal('1e12'):
+                        value=str(number.normalize())
+                except (ArithmeticError,ValueError): pass
+                values[key]=value
+            inputs=values
+        args={'method':method,'assumptions':inputs}
+    elif name=='calculate_proposal':
+        args={'proposal_id':args.get('proposal_id')}
+    return name,json.dumps(args,sort_keys=True,ensure_ascii=False)
+
+
 @competition.traced("agent", "conversation_id")
 @store.conversation_execution
 @with_turn_budget
 def execute(cid,expected_turn_id=None):
-    start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];unit_retries=0;state_retries=0;denied=0
+    start=time.monotonic();chat=store.get_conversation(cid);turn_id=chat["turn_id"];unit_retries=0;amount_retries=0;state_retries=0;denied=0
     user_text=task_request(chat)
     rules=effective_rules(chat)
     ctx=chat.get('turn_contexts',{}).get(turn_id,{})
@@ -527,16 +673,11 @@ def execute(cid,expected_turn_id=None):
              and isinstance(s.get('result'),dict) and not s['result'].get('error') and not s.get('reused_from_step_id')]
     evidence_run=store.get_run(chat['run_id']) if chat.get('run_id') else None
     saved_sources=(evidence_run or chat).get('research_sources',[])
-    required=set(ctx.get('required_artifacts',[])) if ctx.get('resume_from_turn_id') else requested_artifacts(user_text)
-    if rules['no_tools']: required=set()
-    if rules['no_report']: required.discard('report')
-    if rules['no_calculation'] or rules['no_valuation']: required.discard('valuation')
-    if rules['no_valuation']: required.discard('proposal')
-    if rules['no_network']: required.discard('document')
+    required=task_contract.required_artifacts(chat)
     if "document" in required and documents.attached_documents(chat) and not re.search(r"查找|找到|下载|获取|找",user_text):
         required.remove("document");required.add("document_search")
     if ctx:
-        store.update_conversation(cid,lambda c:c['turn_contexts'][turn_id].update(required_artifacts=sorted(required)))
+        store.update_conversation(cid,lambda c:task_contract.set_required(c['turn_contexts'][turn_id],required))
     try:
         while True:
             if store.conversation_cancelled(cid): raise research.Cancelled()
@@ -545,9 +686,15 @@ def execute(cid,expected_turn_id=None):
             store.update_conversation(cid,lambda c:c.setdefault('budget_usage',{}).update(decisions_used=decisions_used))
             chat=store.get_conversation(cid)
             feedback_note=results[-1].get('validation_feedback','') if results else ''
-            policy_note="\n本轮用户禁止使用任何工具，只能 respond。" if rules['no_tools'] else (
-                "\n本轮禁止的联网、报告或估值动作不得提出；只用许可的已有材料答复，无法核实时说明缺口。" if
-                any(rules[k] for k in ('no_network','no_report','no_calculation','no_valuation')) else "")
+            policy_note="\n本轮用户禁止使用任何工具，只能 respond。" if rules['no_tools'] else ''.join(
+                '\n'+notice for key,notice in (
+                    ('no_network','本轮不联网；使用已取得的材料。'),
+                    ('no_deep_research','本轮不启动深度研究；其他查阅仅按各自权限执行。'),
+                    ('no_report','本轮不生成或修改报告。'),
+                    ('no_calculation','本轮不执行估值计算；若用户明确要求待确认方案且未禁止方案，可提出方案。'),
+                    ('no_valuation','本轮不执行估值计算或提出估值方案。'),
+                    ('no_per_share','本轮不计算每股价值；可按授权计算总权益或企业价值，估值参数须省略股本，不能采用每股股利法。')
+                ) if rules.get(key))
             decision_run=store.get_run(chat['run_id']) if chat.get('run_id') else None
             research_plan=resume_plan.plan(chat,decision_run)
             search_state=search_progress.status(chat)
@@ -558,7 +705,7 @@ def execute(cid,expected_turn_id=None):
                 "proposed_scenarios":chat.get("proposals",[])[-4:],
                 "conversation":[{"role":m["role"],"content":m["content"]} for m in chat["messages"][-24:]],
                 "tool_results":results,"data_source":chat["data_source"],"user_constraints":rules,
-                "original_request":user_text,"continuation":bool(ctx.get('resume_from_turn_id')),
+                "original_request":user_text,"task_contract":task_contract.current_contract(chat),"continuation":bool(ctx.get('resume_from_turn_id')),
                 "research_plan":research_plan,"search_progress":search_state,
                 "available_tools":[name for name in TOOLS if name+':' in SYSTEM and not prohibited_reason(rules,name)
                     and not (name=='web_search' and search_state['web_search_paused'])],
@@ -622,6 +769,15 @@ def execute(cid,expected_turn_id=None):
                         results.append({'validation_feedback':'事实来源状态不得升级：'+'；'.join(i['message'] for i in state_issues)})
                         continue
                     message='本轮回答未通过事实来源状态校验，未采用原回答：\n\n'+'\n'.join(i['message'] for i in state_issues)+'\n\n财务值与工具记录仍保留，请依据实际来源状态继续研究。'
+                amount_issue=response_amount_feedback(message,current_run,results)
+                if amount_issue:
+                    if amount_retries<1:
+                        amount_retries+=1
+                        results.append({'validation_feedback':'最终答复的金额单位换算未通过：'+amount_issue+
+                            '。请根据已读原文纠正本条答复，保留来源与报告保存状态，不要重复开展研究或修改已确认估值。'})
+                        continue
+                    response_incomplete=True
+                    message='最终答复的金额换算仍未通过校验，原答复未采用：\n\n'+amount_issue+'\n\n已完成的工具结果和已保存报告仍保留，金额总结需继续核对。'
                 unit_issue=document_unit_feedback(message,results)
                 if unit_issue:
                     if unit_retries<1:
@@ -652,12 +808,16 @@ def execute(cid,expected_turn_id=None):
             if decision.get("action")!="tool" or not isinstance(decision.get("arguments",{}),dict):
                 no_progress("输出必须为 respond 或 tool；请遵循 JSON 结构。");continue
             name=memo_tool_for_request(str(decision.get("tool","")),chat,results);args=decision.get("arguments",{})
+            if name=='read_document':
+                corrective=resume_plan.repeated_document_recovery(chat,decision_run,args)
+                if corrective:
+                    decision=corrective;name=corrective['tool'];args=corrective.get('arguments',{})
             if name=='web_search' and search_state['web_search_paused']:
                 # Block only the stalled search tool. Reading and authorized
                 # report work remain available under the same token/time budget.
                 results.append({'validation_feedback':search_progress.NOTICE})
                 continue
-            reason=prohibited_reason(rules,name)
+            reason=prohibited_reason(rules,name,args)
             if reason:
                 denied+=1
                 no_progress(reason+"请直接回答已掌握的事实并说明尚未核实的部分，不要再次提出被禁止的工具。")
@@ -673,6 +833,7 @@ def execute(cid,expected_turn_id=None):
             store.update_conversation(cid,lambda c:c["steps"].append(event))
             reuse=None
             try:
+                enforce_valuation_scope(chat,name,args)
                 reuse=reusable_step(chat,name,args)
                 if reuse:
                     result=reuse['result'];state='completed'
@@ -684,14 +845,21 @@ def execute(cid,expected_turn_id=None):
             except (ValueError,KeyError,ProviderError,TypeError) as error:
                 result={"error":str(error)[:1200] if not isinstance(error,KeyError) else "未找到研究或材料"};state="failed"
             report_fingerprint=None
-            if state=='completed' and isinstance(result,dict) and result.get('artifact')=='report' and chat.get('run_id'):
-                report_fingerprint=(reuse or {}).get('report_input_fingerprint') or report_input_fingerprint(store.get_run(chat['run_id']))
+            output_identity=None
             observed_run=store.get_run(chat['run_id']) if chat.get('run_id') else None
+            if state=='completed' and isinstance(result,dict) and result.get('artifact')=='report' and observed_run:
+                identity=report_identity(observed_run)
+                if result.get('revision')==identity['revision']:
+                    report_fingerprint=(reuse or {}).get('report_input_fingerprint') or report_input_fingerprint(observed_run)
+                    output_identity=(reuse or {}).get('report_output_identity') or identity
             def complete(c):
                 target=next(s for s in c["steps"] if s["id"]==sid)
                 target.update(state=state,finished_at=store.now(),result=result)
                 if reuse: target.update(reused_from_step_id=reuse['id'],message='复用已完成的'+LABELS.get(name,'研究结果'))
-                if report_fingerprint: target['report_input_fingerprint']=report_fingerprint
+                if report_fingerprint:
+                    target['report_input_fingerprint']=report_fingerprint
+                    target['report_request_fingerprint']=report_request_fingerprint(chat)
+                    target['report_output_identity']=output_identity
                 if name=='start_research' and state=='completed' and turn_id in c.get('turn_contexts',{}):
                     c['turn_contexts'][turn_id]['run_id']=c.get('run_id')
                 c.setdefault('turn_coverage',{})[turn_id]=turn_observation(c,observed_run)
@@ -708,8 +876,10 @@ def execute(cid,expected_turn_id=None):
                 results.append({"tool":name,"result":result})
                 if state=='completed': stalled=0;last_stalled_action=None
                 else:
-                    failure_key=(name,json.dumps(args,sort_keys=True,ensure_ascii=False))
+                    failure_key=failed_action_fingerprint(name,args)
                     feedback='此次'+LABELS.get(name,'研究操作')+'失败：'+str(result.get('error') or result.get('status') or '没有取得有效结果')[:600]
+                    if name in ('propose_valuation','calculate_valuation','calculate_proposal'):
+                        feedback+='。只修改说明文字不能修复相同估值参数；缺少基数时先查原文，不能以零占位，或明确说明尚不能计算/保存方案'
                     if failure_key in failed_actions: no_progress(feedback)
                     else:
                         failed_actions.add(failure_key);stalled=0;last_stalled_action=None

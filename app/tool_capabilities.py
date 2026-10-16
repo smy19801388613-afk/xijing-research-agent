@@ -6,11 +6,11 @@ Adding a tool requires declaring its capabilities here before it can run.
 
 TOOLS = {
     'search_company': {'network'},
-    'start_research': {'network', 'calculation', 'report'},
-    'fetch_annual_report': {'network'},
-    'attach_document': set(),
-    'search_documents': set(),
-    'read_document': set(),
+    'start_research': {'network', 'calculation', 'report', 'materials_write'},
+    'fetch_annual_report': {'network', 'materials_write'},
+    'attach_document': {'materials_write'},
+    'search_documents': {'pdf_read'},
+    'read_document': {'pdf_read'},
     'valuation_options': set(),
     # Internal input validation does not publish a calculated valuation result.
     'propose_valuation': {'valuation'},
@@ -19,12 +19,12 @@ TOOLS = {
     'fcff_bridge': {'calculation', 'valuation'},
     'peer_comparison': {'network', 'calculation'},
     'revise_report': {'report'},
-    'build_investment_memo': {'network', 'report'},
+    'build_investment_memo': {'network', 'report', 'pdf_read', 'web_read'},
     'refine_investment_memo': {'report'},
     'web_search': {'network'},
-    'read_webpage': {'network'},
-    'read_web_page': {'network'},
-    'read_public_pdf': {'network'},
+    'read_webpage': {'network', 'web_read'},
+    'read_web_page': {'network', 'web_read'},
+    'read_public_pdf': {'network', 'pdf_read'},
     'plan_research_questions': {'questions'},
     'update_research_question': {'questions'},
 }

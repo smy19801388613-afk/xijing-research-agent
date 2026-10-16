@@ -80,7 +80,7 @@ def test_launcher_decodes_utf8_workspace_and_checks_server_identity(tmp_path, sh
     output = result.stdout.decode(errors='replace') + result.stderr.decode(errors='replace')
     if mismatch is None:
         assert result.returncode == 0, output
-        assert f'Research Desk v{VERSION} is running.' in output
+        assert f'Xijing AI v{VERSION} is running.' in output
         assert f'/?v={VERSION}&ui=' in output
         assert 'Project:' in output
     else:

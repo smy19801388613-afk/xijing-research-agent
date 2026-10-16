@@ -177,26 +177,24 @@ def attached_documents(chat):
 
 
 def refresh_material_availability(run,doc,pages):
-    """Reconcile availability only; attaching a file does not validate old conclusions."""
+    """Resolve a current annual-material gap, never rewrite a saved report."""
+    request=run.get('request',{})
+    if doc.get('ticker')!=request.get('ticker') or doc.get('year')!=request.get('year'): return
     front=re.sub(r"\s+","","\n".join(pages[:20]))[:16000]
     annual=bool(re.search(fr"{doc['year']}年?年度报告",front))
     if not annual: return
-    run["gaps"]=[g for g in run.get("gaps",[]) if g.get("code")!="no_document"]
     # An annual-report summary does not resolve a missing full-report limitation.
     summary="摘要" in doc.get("title","") or bool(re.search(fr"{doc['year']}年?年度报告摘要",front[:3000]))
-    if summary or not isinstance(run.get("memo"),dict): return
-    stale=re.compile(r"(?:未|尚未|没有)(?:取得|获取|接入|提供|取得到).{0,12}(?:年报|年度报告)")
-    limitations=[]
-    for item in run["memo"].get("limitations",[]):
-        if not isinstance(item,str) or not stale.search(item):
-            limitations.append(item);continue
-        # Preserve other, still-valid caveats in the same entry, including missing notes.
-        clauses=re.split(r"[，,；;。]",item)
-        kept=[part.strip() for part in clauses if part.strip() and not stale.search(part)
-              and not re.fullmatch(r"仅基于结构化财务数据",part.strip())]
-        kept.insert(0,"已接入年度报告全文，原有分析尚未根据新增材料重新核验")
-        limitations.append("；".join(kept)+"。")
-    run["memo"]["limitations"]=list(dict.fromkeys(limitations))
+    if summary: return
+    def resolved(gap):
+        if gap.get('code')!='no_document': return False
+        if gap.get('year',doc['year'])!=doc['year'] or gap.get('ticker',doc['ticker'])!=doc['ticker']: return False
+        message=str(gap.get('message',''))
+        years=re.findall(r'20\d{2}',message)
+        return (bool(re.search(r'年度报告|年报',message))
+                and not re.search(r'半年|季度|季报|中期',message)
+                and all(year==str(doc['year']) for year in years))
+    run['gaps']=[gap for gap in run.get('gaps',[]) if not resolved(gap)]
 
 
 def attach(cid,doc_id,allow_running=False):
@@ -213,14 +211,16 @@ def attach(cid,doc_id,allow_running=False):
         if doc_id not in ids: ids.append(doc_id)
         refs=value.setdefault("attached_documents",[])
         if not any(d["id"]==doc_id for d in refs): refs.append(public_document(doc))
-    store.update_conversation(cid,add)
-    if chat.get("run_id"):
+    def already_attached(value):
+        return doc_id in value.get('document_ids',[]) and any(d['id']==doc_id for d in value.get('attached_documents',[]))
+    if not already_attached(chat): store.update_conversation(cid,add)
+    if chat.get("run_id") and not already_attached(run):
         def add_to_run(value):
             add(value)
             refresh_material_availability(value,doc,pages)
         store.update_run(chat["run_id"],add_to_run)
     return {"artifact":"document","document":public_document(doc),"page_count":len(pages),
-        "note":"已接入当前对话，支持全文检索和按页查阅；扫描页按需使用本机 OCR，结果需核对原图，不会自动覆盖已核验财务事实。"}
+        "note":"已接入当前对话，支持全文检索和按页查阅；扫描页按需使用本机 OCR，结果需核对原图。接入材料不改写已保存报告或财务事实，可在对话中修订并生成新的报告版本。"}
 
 
 def search_attached(chat,queries,document_id=None):

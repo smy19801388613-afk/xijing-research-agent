@@ -8,6 +8,7 @@ import re
 
 from .turn_constraints import coverage, effective_rules, enforce, task_request, task_steps, canonical_url
 from . import questions as research_questions
+from .task_contract import current_contract, search_requested
 
 RESEARCH_TOOLS = {'web_search', 'read_webpage', 'read_web_page', 'read_public_pdf',
                   'search_documents', 'read_document', 'update_research_question'}
@@ -17,13 +18,25 @@ RESEARCH_TOOLS = {'web_search', 'read_webpage', 'read_web_page', 'read_public_pd
 # period, unit and consolidated/parent scope when answering.
 DOCUMENT_METRICS = (
     ('营业收入', r'营业收入|营收'),
-    ('归母净利润', r'归母净利润|归属于(?:上市公司|母公司)(?:股东|所有者)(?:的)?净利润'),
+    ('归母净利润', r'归母净利(?:润)?|归母利润|归属于(?:上市公司|母公司|本行)(?:股东|所有者)(?:的)?净利润'),
     ('经营现金流', r'经营现金流|经营(?:活动)?(?:产生的)?现金流量净额'),
     ('资本开支', r'资本开支|购建固定资产.{0,12}支付的现金'),
     ('合同负债', r'合同负债'),
     ('总资产', r'总资产|资产总计'),
     ('总负债', r'总负债|负债合计'),
 )
+
+
+def comparative_period_available(body, position, years):
+    """Quarter rows cannot borrow the years from an earlier annual table."""
+    prefix = body[:position]
+    headers = list(re.finditer(r'20\d{2}(?:[^\d]{0,40}20\d{2})+', prefix))
+    quarters = list(re.finditer(r'第[一二三四1234]季度|按季度|分季度', prefix))
+    if quarters and (not headers or quarters[-1].end() > headers[-1].end()):
+        return False
+    context = headers[-1].group() if headers else prefix
+    return bool((years and all(y in context for y in years)) or
+                re.search(r'上期|上年|去年|同期', prefix[-500:]))
 
 
 def document_checks(chat):
@@ -46,12 +59,36 @@ def document_checks(chat):
     for label, pattern in selected:
         # A comparison needs at least two numeric cells near the requested row;
         # an audit paragraph mentioning a single revenue figure is insufficient.
-        found = any((not comparison or (years and all(y in body for y in years)) or re.search(r'上期|上年|去年|同期', body))
+        found = any((not comparison or comparative_period_available(body, m.start(), years))
                     and len(re.findall(r'(?<!\d)[-−]?\d[\d,]*(?:\.\d+)?', body[m.end():m.end()+160])) >= (2 if comparison else 1)
                     for body in bodies for m in re.finditer(pattern, body))
         checks.append({'metric': label, 'pattern': pattern, 'years': years,
                        'comparison_required': comparison, 'read_candidate_available': found})
     return checks
+
+
+def repeated_document_recovery(chat, run, arguments):
+    """Redirect a redundant successful read to a known unread target page."""
+    if not any(not c['read_candidate_available'] for c in document_checks(chat)):
+        return None
+    docid, page, count = arguments.get('document_id'), arguments.get('page'), arguments.get('count', 1)
+    if not isinstance(page, int) or not isinstance(count, int) or count < 1:
+        return None
+    steps = activity_steps(task_steps(chat))
+    read_pages = set()
+    for step in steps:
+        result = step.get('result') or {}
+        if (step.get('tool') != 'read_document' or step.get('state') != 'completed'
+                or result.get('error') or result.get('status') in ('error', 'failed', 'needs_ocr')):
+            continue
+        for source in result.get('snippets', []):
+            source_doc = source.get('document_id') or step.get('arguments', {}).get('document_id')
+            if source_doc == docid and source.get('text', '').strip():
+                read_pages.add(source.get('page'))
+    if not all(p in read_pages for p in range(page, page + count)):
+        return None
+    current = [s for s in steps if s.get('turn_id') == chat.get('turn_id')]
+    return document_recovery(chat, run, current, steps)
 
 
 def unfinished_response(message):
@@ -99,11 +136,14 @@ def document_recovery(chat, run, current, all_steps):
         if docid not in allowed_ids or not isinstance(page, int) or (docid, page) in tried: continue
         body = re.sub(r'\s+', '', source.get('text', ''))
         score = sum(bool(re.search(c['pattern'], body)) for c in pending)
-        if score: ranked.append((score, docid, page))
+        if score:
+            try: enforce(chat, 'read_document', {'document_id': docid, 'page': page, 'count': 1})
+            except ValueError: continue
+            ranked.append((score, docid, page))
     # First use a targeted search to avoid the old arbitrary first-source read.
     if searches and ranked:
         _, docid, page = sorted(ranked, key=lambda row: -row[0])[0]
-        try: enforce(chat, 'read_document')
+        try: enforce(chat, 'read_document', {'document_id': docid, 'page': page, 'count': 1})
         except ValueError: return None
         return {'action': 'tool', 'tool': 'read_document',
                 'arguments': {'document_id': docid, 'page': page, 'count': 1},
@@ -114,13 +154,14 @@ def document_recovery(chat, run, current, all_steps):
         used = {q for step in searches for q in step.get('arguments', {}).get('queries', [])}
         queries = [q for q in queries if q not in used]
         if queries:
-            try: enforce(chat, 'search_documents')
-            except ValueError: return None
-            return {'action': 'tool', 'tool': 'search_documents', 'arguments': {'queries': queries},
-                    'message': '定位各项待核对指标的原文页，避免只读到一项就结束'}
+            try: enforce(chat, 'search_documents', {'queries': queries})
+            except ValueError: pass
+            else:
+                return {'action': 'tool', 'tool': 'search_documents', 'arguments': {'queries': queries},
+                        'message': '定位各项待核对指标的原文页，避免只读到一项就结束'}
     if ranked:
         _, docid, page = sorted(ranked, key=lambda row: -row[0])[0]
-        try: enforce(chat, 'read_document')
+        try: enforce(chat, 'read_document', {'document_id': docid, 'page': page, 'count': 1})
         except ValueError: return None
         return {'action': 'tool', 'tool': 'read_document',
                 'arguments': {'document_id': docid, 'page': page, 'count': 1},
@@ -142,31 +183,33 @@ def activity_steps(steps):
     return expanded
 
 
-def search_requested(text):
-    """Recognize execution, excluding questions about the search capability."""
-    for clause in re.split(r'[。；;\n，,]', text):
-        if not re.search(r'(?:联网|上网)?搜索|联网查证|联网查找|联网检索', clause):
-            continue
-        capability = re.search(r'(?:如何|怎么|怎样).{0,8}(?:使用|配置|开启|设置|调用)|'
-                               r'(?:是否|能否|能不能).{0,6}(?:联网|搜索)|'
-                               r'(?:你|系统|[Aa]gent).{0,5}(?:能|可以|支持).{0,6}(?:联网|搜索)', clause)
-        if capability and not re.search(r'帮我|替我|搜索一下|查一下', clause):
-            continue
-        if re.search(r'(?:介绍|解释|说明).{0,10}(?:联网|搜索)(?:功能|能力)|(?:联网|搜索)(?:功能|能力).{0,8}(?:是什么|怎么|如何)', clause):
-            continue
-        return True
-    return False
+def completed_report_edit(chat, run):
+    """A saved, current scoped edit does not authorize every old research gap.
+
+    Use the latest concrete human steering, including across a pure continuation.
+    A report from an earlier request, failed save, or changed evidence is not enough.
+    Explicit outstanding search/body/page obligations are handled separately below.
+    """
+    if not run or not run.get('request'):
+        return False
+    # Lazy import keeps the existing fingerprint/sync definition authoritative
+    # without introducing a second implementation or an import-time cycle.
+    from .agent import report_step_for_input
+    if current_contract(chat)['intent'] != 'report_edit': return False
+    return bool(report_step_for_input(chat, run))
 
 
 def plan(chat, run=None):
     run = run or {}
     ctx = chat.get('turn_contexts', {}).get(chat.get('turn_id'), {})
-    rules = effective_rules(chat)
-    text = task_request(chat)
+    contract = current_contract(chat)
+    rules = contract['rules']
+    text = contract['active_request']
+    completion = contract['completion']
     steps = task_steps(chat)
     current = [s for s in activity_steps(steps) if s.get('turn_id') == chat.get('turn_id')]
     observed = coverage(steps, text, run.get('research_sources', chat.get('research_sources', [])),
-                        run=run or None, require_body=rules['require_body'])
+                        run=run or None, require_body=completion['require_body'])
     previous = ctx.get('resume_pending')
     if previous is None:
         previous = next((m.get('delivery', {}).get('pending', []) for m in reversed(chat.get('messages', []))
@@ -178,13 +221,13 @@ def plan(chat, run=None):
     pending_questions = [{k: q.get(k) for k in ('id', 'question', 'status', 'priority', 'answer', 'gaps', 'next_action', 'bindings')}
                          for q in ordered[:5]]
     obligations = []
-    explicit_search = search_requested(text)
+    explicit_search = completion['require_search']
     if explicit_search and not rules['no_network'] and not rules['no_tools'] and not observed['search_calls']:
         obligations.append('search')
     # Existing source inventory alone does not prove that this task read it.
-    if rules['require_body'] and not (observed['body_sources'] or observed['document_pages']):
+    if completion['require_body'] and not (observed['body_sources'] or observed['document_pages']):
         obligations.append('body')
-    checks = document_checks(chat)
+    checks = [] if rules['no_tools'] or contract['intent'] == 'discussion' else document_checks(chat)
     if any(not c['read_candidate_available'] for c in checks):
         obligations.append('document_targets')
     def useful(step):
@@ -199,21 +242,29 @@ def plan(chat, run=None):
             return any(s.get('text') for s in result.get('snippets', result.get('results', [])))
         return False
     progressed = any(useful(s) for s in current)
-    report_edit_only = bool(re.search(r'更新|修订|改写|修改', text) and
-                            not re.search(r'开展|进行.*研究|深入|联网|搜索|补充|重新研究', text))
-    deep_request = bool(re.search(r'深度.*研究|完整.*研究|完整.*备忘录', text)) and not report_edit_only
+    deep_request = completion['track_open_questions']
+    edit_saved = completed_report_edit(chat, run)
+    # Keep the run's open questions visible as gaps, but do not turn them into
+    # another research assignment after this human's requested edit was saved.
+    if edit_saved:
+        deep_request = False
     if ctx.get('resume_from_turn_id') and previous and deep_request and pending_questions and not progressed:
         obligations.append('question_progress')
-    return {'original_request': text, 'previous_pending': previous or [], 'pending_questions': pending_questions,
+    return {'original_request': text, 'original_task_request':contract['original_request'],
+            'contract_scope':contract['scope'], 'previous_pending': previous or [], 'pending_questions': pending_questions,
             'document_checks': [{k: v for k, v in c.items() if k != 'pattern'} for c in checks],
             'open_question_count': len(open_questions), 'track_open_questions': deep_request, 'pending_obligations': obligations,
+            'completed_report_edit': edit_saved,
             'task_observation': {k: observed.get(k) for k in ('search_calls', 'search_results', 'body_sources',
                 'document_pages', 'telemetry_incomplete', 'status')},
-            'next_action': (pending_questions[0].get('next_action') or pending_questions[0].get('question')) if pending_questions else None,
-            'instruction': '继续已经授权的未完成事项。优先检查现有原文能否回答关键缺口并更新问题；资料不足再定向检索。'
+            'next_action': (pending_questions[0].get('next_action') or pending_questions[0].get('question')) if pending_questions and deep_request else None,
+            'instruction': ('本轮已按当前人类修订要求保存报告，输入与请求指纹一致。说明实际保存版本与修订结果；'
+                            '长期未解决的问题继续保留为真实缺口，不因此新增检索、读页或再次修订。'
+                            if edit_saved and not obligations else
+                           '继续已经授权的未完成事项。优先检查现有原文能否回答关键缺口并更新问题；资料不足再定向检索。'
                            '报告已保存不代表研究完成；不要重复请求继续或保存授权。每轮有界推进，不要求强行回答所有问题。'
                            'document_checks 仅表示读到了待核对的候选行，不能据此声称核验。逐项回答所需年度、同比、单位、合并/母公司口径及物理页码；'
-                           '未回答事项仍有可读材料时继续查阅。资料真实缺失、歧义或不可用时明确阻碍；最终回复后不会自动继续后台执行。'}
+                           '未回答事项仍有可读材料时继续查阅。资料真实缺失、歧义或不可用时明确阻碍；最终回复后不会自动继续后台执行。')}
 
 
 def recovery(chat, run, research_plan):
@@ -223,6 +274,14 @@ def recovery(chat, run, research_plan):
         return None
     rules = effective_rules(chat)
     if rules['no_tools']:
+        return None
+    # A previously constructed plan can predate the successful edit or a policy
+    # update. Recheck those two conditions before selecting any corrective tool.
+    if completed_report_edit(chat, run):
+        pending = [item for item in pending if item != 'question_progress']
+    if rules['no_network']:
+        pending = [item for item in pending if item != 'search']
+    if not pending:
         return None
     all_steps = activity_steps(task_steps(chat))
     current = [s for s in all_steps if s.get('turn_id') == chat.get('turn_id') and not s.get('reused_from_step_id')]
@@ -236,16 +295,16 @@ def recovery(chat, run, research_plan):
     if attempts >= 2:
         return None
 
-    def permitted(name):
+    def permitted(name, arguments=None):
         try:
-            enforce(chat, name)
+            enforce(chat, name, arguments)
             return True
         except ValueError:
             return False
 
     def search_action():
         company = (run or {}).get('company') or (run or {}).get('request', {}).get('ticker', '')
-        questions = research_plan['pending_questions']
+        questions = research_plan['pending_questions'] if research_plan.get('track_open_questions') else []
         used = {q for s in all_steps if s.get('tool') == 'web_search' and (s.get('result') or {}).get('results')
                 for q in s.get('arguments', {}).get('queries', [])}
         queries = [(company + ' ' + (q.get('next_action') or q['question']))[:240].strip() for q in questions]
@@ -277,15 +336,15 @@ def recovery(chat, run, research_plan):
     for source in candidates:
         url = source.get('url', '')
         local = re.fullmatch(r'/api/documents/([\w-]+)/file#page=(\d+)', url)
-        if local and permitted('read_document'):
+        if local:
             docid, page = local[1], int(local[2])
-            if (docid, page) not in tried_pages:
+            if (docid, page) not in tried_pages and permitted('read_document', {'document_id': docid, 'page': page, 'count': 1}):
                 return {'action': 'tool', 'tool': 'read_document', 'arguments': {'document_id': docid, 'page': page, 'count': 1},
                         'message': '继续核对已保存原文，补充未完成问题的依据'}
         if not url.startswith(('https://', 'http://')) or canonical_url(url) in tried_urls:
             continue
         name = 'read_public_pdf' if re.search(r'\.pdf(?:[?#]|$)', url, re.I) else 'read_webpage'
-        if permitted(name):
+        if permitted(name, {'url': url}):
             return {'action': 'tool', 'tool': name, 'arguments': {'url': url},
                     'message': '继续阅读已取得的原文线索，核对未完成的研究问题'}
     if 'question_progress' in pending and permitted('web_search'):

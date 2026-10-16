@@ -12,7 +12,7 @@ class ExecutionBudgetRequest(BaseModel):
     def check_execution_budget(cls, value):
         return None if value is None else normalize_execution_budget(value)
 
-class RunRequest(BaseModel):
+class RunRequest(ExecutionBudgetRequest):
     ticker: str = Field(default="000333.SZ", pattern=r"^\d{6}\.(SZ|SH|BJ)$")
     year: int = Field(default=2025, ge=2000, le=2100)
     as_of: date = Field(default_factory=date.today)

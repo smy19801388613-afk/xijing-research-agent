@@ -74,10 +74,7 @@ def test_attaching_full_annual_refreshes_availability_without_rewriting_history(
     attach_pages(run,['2025 年年度报告全文','业务介绍'])
     saved=store.get_run(run['id'])
     assert [g['code'] for g in saved['gaps']]==['no_supplementary_evidence']
-    assert '未获取年度报告全文' not in saved['memo']['limitations'][0]
-    assert '无法进行深入归因分析' in saved['memo']['limitations'][0]
-    assert saved['memo']['limitations'][1:]==run['memo']['limitations'][1:]
-    assert saved['memo']['summary']==run['memo']['summary']
+    assert saved['memo']==run['memo']
     assert saved['memo_revisions']==run['memo_revisions']
     assert saved['facts']==run['facts'] and saved['report_revision']==1
 
@@ -85,7 +82,7 @@ def test_attaching_full_annual_refreshes_availability_without_rewriting_history(
 def test_summary_does_not_remove_full_report_caveat(run):
     attach_pages(run,['2025 年年度报告摘要'],'年报摘要.pdf')
     saved=store.get_run(run['id'])
-    assert not any(g['code']=='no_document' for g in saved['gaps'])
+    assert saved['gaps']==run['gaps']
     assert saved['memo']==run['memo']
 
 

@@ -113,6 +113,22 @@ def test_offline_report_uses_refine_without_network(chat, monkeypatch):
     assert agent.tool(current,selected,{})['revision'] == 2
 
 
+def test_resumed_report_receives_active_correction_and_retains_original_as_history(chat, monkeypatch):
+    from app.task_contract import current_contract
+    old=begin(chat,'完成深度研究报告并保留两组估值。')
+    agent.finish_error(chat['id'],old['turn_id'],'尚未保存报告','failed')
+    current=store.begin_turn(chat['id'],
+        '继续未完成部分，请纠正现金流的过强判断，引用 pdf-annual-p202。',
+        'stub','documents',resume_from_turn_id=old['turn_id'])
+    seen=[]
+    monkeypatch.setattr(deep_research,'refine',lambda rid,q,*a:seen.append(q) or {'artifact':'report'})
+    agent.tool(current,'refine_investment_memo',{'question':'模型省略了纠正内容'})
+    assert current_contract(current)['original_request']=='完成深度研究报告并保留两组估值。'
+    assert '完成深度研究报告' not in seen[0]
+    assert '纠正现金流的过强判断' in seen[0] and 'pdf-annual-p202' in seen[0]
+    assert '模型省略了纠正内容' not in seen[0]
+
+
 @pytest.mark.parametrize('result', [
     {'status':'error','read_status':'failed','error':'超时','text':''},
     {'status':'document_link','read_status':'pdf_link_only','text':''},

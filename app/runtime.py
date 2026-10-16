@@ -11,8 +11,12 @@ from pathlib import Path
 import signal
 import subprocess
 import sys
+import uuid
+from datetime import datetime,timezone
 from . import store
 from .config import ROOT
+
+START_GRACE_SECONDS=30
 
 
 def _windows_handle(pid, terminate=False):
@@ -85,34 +89,105 @@ def process_state(pid,birth):
 
 
 def launch(kind,target,turn_id=''):
+    nonce=uuid.uuid4().hex
+    with store.connection() as c:
+        c.execute('BEGIN IMMEDIATE')
+        table='conversations' if kind=='conversation' else 'runs'
+        row=c.execute(f'SELECT payload,cancel FROM {table} WHERE id=?',(target,)).fetchone()
+        value=json.loads(row[0]) if row else {}
+        active=bool(row and not row[1] and (value.get('state')=='running' and value.get('turn_id')==turn_id
+                    if kind=='conversation' else value.get('state') in ('queued','running')))
+        if not active: raise ValueError('该执行已经结束，不能再次启动旧进程')
+        registered=c.execute('SELECT pid,birth FROM workers WHERE kind=? AND target=? AND turn_id=?',(kind,target,turn_id)).fetchone()
+        if registered and process_state(*registered) not in ('exited','replaced'):
+            raise ValueError('该研究执行已启动')
+        previous=value.get('execution_launch') or {}
+        if previous and (kind=='run' or previous.get('turn_id')==turn_id):
+            raise ValueError('该执行已提交启动，请等待状态恢复后创建新的重试')
+        value['execution_launch']={'nonce':nonce,'requested_at':store.now(),'turn_id':turn_id}
+        if kind=='run': value['_write_version']=value.get('_write_version',0)+1
+        c.execute(f'UPDATE {table} SET payload=? WHERE id=?',(json.dumps(value,ensure_ascii=False),target))
     folder=store.DATA/('conversations' if kind=='conversation' else 'runs')/target
-    folder.mkdir(parents=True,exist_ok=True)
     module='app.agent_worker' if kind=='conversation' else 'app.worker'
     args=[sys.executable,'-u','-m',module,target]
     if kind=='conversation': args.append(turn_id)
     # Explicit workspace routing also makes isolated integration tests safe.
     env=os.environ.copy();env['RESEARCH_DATA_DIR']=str(store.DATA.resolve())
-    with (folder/'worker.log').open('ab') as log:
-        process=subprocess.Popen(args,cwd=ROOT,stdout=log,stderr=log,env=env,
-                                 creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
-    birth=process_birth(process.pid)
-    active=False
-    with store.connection() as c:
-        c.execute('BEGIN IMMEDIATE')
-        if kind=='conversation':
-            row=c.execute('SELECT payload,cancel FROM conversations WHERE id=?',(target,)).fetchone()
-            value=json.loads(row[0]) if row else {}
-            active=bool(row and not row[1] and value.get('state')=='running' and value.get('turn_id')==turn_id)
-        else:
-            row=c.execute('SELECT state,cancel FROM runs WHERE id=?',(target,)).fetchone()
-            active=bool(row and not row[1] and row[0] in ('queued','running'))
-        if active and birth:
-            c.execute('INSERT OR REPLACE INTO workers VALUES (?,?,?,?,?)',(kind,target,turn_id,process.pid,birth))
-    if not active:
-        # Cancellation may arrive after Popen but before registration.
-        terminate_verified(process.pid,birth)
-    (folder/'worker.pid').write_text(str(process.pid),encoding='ascii')
+    try:
+        folder.mkdir(parents=True,exist_ok=True)
+        with (folder/'worker.log').open('ab') as log:
+            process=subprocess.Popen(args,cwd=ROOT,stdout=log,stderr=log,env=env,
+                                     creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    except Exception:
+        store.fail_execution(kind,target,turn_id,reason='launch_failed',
+            message='无法启动本地执行进程，已保留任务与已有结果；请重试。',expected_launch=nonce)
+        raise
+    birth=None
+    try:
+        birth=process_birth(process.pid)
+        active=False
+        with store.connection() as c:
+            c.execute('BEGIN IMMEDIATE')
+            if kind=='conversation':
+                row=c.execute('SELECT payload,cancel FROM conversations WHERE id=?',(target,)).fetchone()
+                value=json.loads(row[0]) if row else {}
+                active=bool(row and not row[1] and value.get('state')=='running' and value.get('turn_id')==turn_id
+                            and value.get('execution_launch',{}).get('nonce')==nonce)
+            else:
+                row=c.execute('SELECT payload,cancel FROM runs WHERE id=?',(target,)).fetchone()
+                value=json.loads(row[0]) if row else {}
+                active=bool(row and not row[1] and value.get('state') in ('queued','running')
+                            and value.get('execution_launch',{}).get('nonce')==nonce)
+            if active and birth:
+                c.execute('INSERT OR REPLACE INTO workers VALUES (?,?,?,?,?)',(kind,target,turn_id,process.pid,birth))
+        if not active:
+            # Cancellation may arrive after Popen but before registration.
+            if birth: terminate_verified(process.pid,birth)
+            elif process.poll() is None: process.terminate()
+        elif not birth:
+            raise RuntimeError('Cannot register worker identity')
+        (folder/'worker.pid').write_text(str(process.pid),encoding='ascii')
+    except Exception:
+        try:
+            store.fail_execution(kind,target,turn_id,reason='launch_failed',
+                message='无法登记执行进程，已保留任务与已有结果；请重试。',expected_launch=nonce)
+        finally:
+            # This Popen handle belongs to the process just created here. Revoke
+            # first and close it even if registration itself could not persist.
+            if birth: terminate_verified(process.pid,birth)
+            elif process.poll() is None: process.terminate()
+        raise
     return process
+
+
+def reconcile():
+    """Recover confirmed dead active workers, leaving live/unknown identities alone."""
+    with store.connection() as c:
+        chats=[json.loads(r[0]) for r in c.execute('SELECT payload FROM conversations')]
+        runs=[json.loads(r[0]) for r in c.execute("SELECT payload FROM runs WHERE state IN ('queued','running')")]
+        workers={(r[0],r[1],r[2]):(r[3],r[4]) for r in c.execute('SELECT kind,target,turn_id,pid,birth FROM workers')}
+    active_chats={(v['id'],v.get('turn_id')) for v in chats if v.get('state')=='running'}
+    candidates=[('conversation',v,v.get('turn_id','')) for v in chats if v.get('state')=='running']
+    for run in runs:
+        owner=run.get('execution_owner') or {}
+        if (owner.get('conversation_id'),owner.get('turn_id')) not in active_chats:
+            candidates.append(('run',run,''))
+    recovered=[]
+    for kind,value,turn_id in candidates:
+        identity=workers.get((kind,value['id'],turn_id))
+        if identity:
+            if process_state(*identity) not in ('exited','replaced'): continue
+        else:
+            launch=value.get('execution_launch',{})
+            if kind=='conversation' and launch.get('turn_id')!=turn_id: launch={}
+            stamp=launch.get('requested_at') or value.get('turn_contexts',{}).get(turn_id,{}).get('started_at') or value.get('created_at')
+            try: age=(datetime.now(timezone.utc)-datetime.fromisoformat(stamp)).total_seconds()
+            except (ValueError,TypeError): continue
+            if age<START_GRACE_SECONDS: continue
+        if store.fail_execution(kind,value['id'],turn_id,expected_worker=identity or (),
+                                expected_launch=value.get('execution_launch',{}).get('nonce')):
+            recovered.append({'kind':kind,'id':value['id'],'turn_id':turn_id})
+    return recovered
 
 
 def stop(kind,target,turn_id=''):

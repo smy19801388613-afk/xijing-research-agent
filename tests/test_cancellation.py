@@ -66,12 +66,13 @@ def test_late_cancel_and_old_worker_do_not_touch_new_turn(workspace,monkeypatch)
 
 def test_cancel_only_stops_runs_created_by_this_turn(workspace):
     existing=create_run()
+    store.update_run(existing['id'],lambda run:run.update(state='completed_with_gaps'))
     chat=new_turn(existing['id'])
     other=new_turn(existing['id'])
     with store.execution_scope('conversation',chat['id'],chat['turn_id']):
         owned=create_run()
     store.cancel_conversation(chat['id'],chat['turn_id'])
-    assert store.get_run(existing['id'])['state']=='queued'
+    assert store.get_run(existing['id'])['state']=='completed_with_gaps'
     assert not store.cancelled(existing['id'])
     assert store.get_conversation(other['id'])['state']=='running'
     assert store.get_run(owned['id'])['state']=='cancelled'

@@ -161,3 +161,63 @@ def test_long_source_locators_are_exact_in_context_and_tool_results():
     for projected in (sources[0], result[0]['result']['snippets'][0]):
         for field in ('id', 'document_id', 'url', 'source_url', 'locator'):
             assert projected[field] == source[field]
+
+
+def test_cross_page_comparison_keeps_previous_page_tails_through_second_compaction():
+    pages = [{'document_id': 'annual', 'page': page,
+              'text': '表格标题和单位：元。\n' + '表格数据\n' * 280 + f'核对行 {page}: 1,758,998,265',
+              'url': f'/api/documents/annual/file#page={page}'} for page in (30, 98, 198, 199)]
+    rows = [{'tool': 'read_document', 'result': {'snippets': pages[:1]}},
+            {'tool': 'read_document', 'result': {'snippets': pages[1:2]}},
+            {'tool': 'read_document', 'result': {'snippets': pages[2:]}},
+            {'tool': 'update_research_question', 'result': {'artifact': 'question', 'id': 'q1'}}]
+    original = deepcopy(rows)
+    first = ctx.compact_tool_results(rows)
+    second = ctx.compact_tool_results(first, max_chars=3500)
+    for projected in (first, second):
+        retained = {s['page']: s['text'] for row in projected if row.get('full_read_observation')
+                    for s in row['result'].get('snippets', [])}
+        assert retained == {s['page']: s['text'] for s in pages}
+        inventory = next(row['read_inventory'] for row in projected if row.get('read_inventory'))
+        assert {s['page'] for s in inventory['sources']} == {30, 98, 198, 199}
+    assert rows == original
+
+
+def test_comparison_working_set_is_bounded_and_overlapping_pages_are_not_duplicated():
+    def page(p):
+        return {'document_id': 'annual', 'page': p, 'text': f'第{p}页单位：元\n' + '表格\n' * 650}
+    rows = [{'tool': 'read_document', 'result': {'snippets': [page(p), page(p + 1)]}}
+            for p in range(1, 30)]
+    projected = ctx.compact_tool_results(rows)
+    full = [r for r in projected if r.get('full_read_observation')]
+    assert len(full) <= 4
+    sources = [s for row in full for s in row['result']['snippets']]
+    assert len({s['page'] for s in sources}) == len(sources)
+    assert sum(ctx.size(row['result']['snippets']) for row in full[:-1]) <= 16000
+    inventory = next(row['read_inventory'] for row in full if row.get('read_inventory'))
+    assert {s['page'] for s in inventory['sources']} == set(range(1, 31))
+    assert ctx.size(projected) < 30000
+
+
+def test_read_inventory_rejects_failed_reads_and_does_not_upgrade_excerpts():
+    rows = [
+        {'tool': 'read_document', 'result': {'snippets': [{'document_id': 'annual', 'page': 1,
+             'text': '原文节选', 'excerpt_only': True}]}},
+        {'tool': 'read_public_pdf', 'result': {'error': '读取失败', 'results': [
+            {'document_id': 'annual', 'page': 2, 'text': '不可采用的正文'}]}},
+        {'tool': 'read_document', 'result': {'snippets': [{'document_id': 'annual', 'page': 3,
+             'text': '新页原文'}]}},
+    ]
+    projected = ctx.compact_tool_results(ctx.compact_tool_results(rows), max_chars=1000)
+    inventory = next(row['read_inventory'] for row in projected if row.get('read_inventory'))
+    assert {s['page'] for s in inventory['sources']} == {1, 3}
+    partial = next(s for row in projected for s in row.get('result', {}).get('snippets', []) if s.get('page') == 1)
+    assert partial['excerpt_only'] is True
+
+
+def test_excerpts_older_than_working_set_keep_their_truncation_marker():
+    rows = [{'tool': 'read_document', 'result': {'snippets': [{'document_id': 'annual',
+             'page': p, 'text': '只有一段节选', 'excerpt_only': True}]}} for p in range(6)]
+    projected = ctx.compact_tool_results(ctx.compact_tool_results(rows))
+    snippets = [s for row in projected for s in row.get('result', {}).get('snippets', [])]
+    assert len(snippets) == 6 and all(s['excerpt_only'] for s in snippets)

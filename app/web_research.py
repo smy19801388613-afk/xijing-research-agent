@@ -18,6 +18,7 @@ import re
 import socket
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from datetime import date, datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -472,7 +473,8 @@ def search(queries: list[str], as_of: str | None = None, max_results: int = 12) 
     fetched = _now()
     collected, errors, engines, excluded = [], [], [], 0
     with ThreadPoolExecutor(max_workers=min(6, len(queries))) as pool:
-        batches = list(pool.map(lambda q: _query_search(q, as_of), queries))
+        futures = [pool.submit(copy_context().run, _query_search, q, as_of) for q in queries]
+        batches = [future.result() for future in futures]
     for query, (rows, errs, used) in zip(queries, batches):
         errors.extend(errs)
         engines.extend(used)

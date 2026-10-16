@@ -82,7 +82,7 @@ def compact_sources(sources, limit=4500, count=16, excerpt=450):
         text = source.get('text') or source.get('quote') or source.get('snippet')
         if text and excerpt:
             item['text'] = text[:excerpt]
-            item['excerpt_only'] = len(text) > excerpt
+            item['excerpt_only'] = bool(source.get('excerpt_only') or source.get('truncated') or len(text) > excerpt)
         selected.append(item)
         if len(selected) >= count:
             break
@@ -204,14 +204,15 @@ def _tool_result(result, recent, preserve_read=False):
         if isinstance(result.get(key), list):
             if preserve_read and key in ('snippets', 'results'):
                 item[key] = [dict(_fields(s, SOURCE_FIELDS, 300), text=s.get('text', ''),
-                             excerpt_only=bool(s.get('truncated'))) for s in result[key] if isinstance(s, dict)]
+                             excerpt_only=bool(s.get('truncated') or s.get('excerpt_only'))) for s in result[key] if isinstance(s, dict)]
             else:
                 item[key] = compact_sources(result[key], limit=2600 if recent else 650,
                                             count=4 if recent else 2, excerpt=800 if recent else 80)
     if result.get('url'):
         item.update(_fields(result, SOURCE_FIELDS, 200))
         item['text'] = result.get('text', '') if preserve_read else result.get('text', '')[:1800 if recent else 160]
-        item['excerpt_only'] = len(result.get('text', '')) > len(item['text'])
+        item['excerpt_only'] = bool(result.get('excerpt_only') or result.get('truncated') or
+                                    len(result.get('text', '')) > len(item['text']))
     if 'items' in result:
         item['items'] = [_fields(r, ('id', 'question', 'status', 'next_action', 'ts_code', 'name',
                       'symbol', 'ticker', 'year'), 500) for r in result.get('items', [])[:12] ]
@@ -223,10 +224,48 @@ def _tool_result(result, recent, preserve_read=False):
     return item if preserve_read else _fit(item, 3400 if recent else 1000)
 
 
+READ_TOOLS = {'read_document', 'read_public_pdf', 'read_webpage', 'read_web_page'}
+UNREAD_STATUSES = {'error', 'failed', 'excluded', 'excluded_after_cutoff', 'needs_ocr'}
+
+
+def _read_sources(row):
+    result = row.get('result')
+    if (row.get('tool') not in READ_TOOLS or not isinstance(result, dict) or
+            result.get('error') or result.get('status') in UNREAD_STATUSES):
+        return []
+    sources = [s for key in ('snippets', 'results') for s in result.get(key, [])
+               if isinstance(s, dict)]
+    if result.get('text'):
+        sources.append(result)
+    return [s for s in sources if str(s.get('text') or '').strip() and not s.get('error')
+            and s.get('status') not in UNREAD_STATUSES]
+
+
+def _read_key(source):
+    # Document/page identity also deduplicates overlapping multi-page reads.
+    location = source.get('document_id') or (source.get('url') or source.get('source_url') or '').split('#')[0]
+    return (location, source.get('page')) if location else (source.get('id') or
+        hashlib.sha256(source.get('text', '').encode()).hexdigest(), source.get('page'))
+
+
 def compact_tool_results(results, max_chars=10000):
     """Deduplicate identical observations but retain errors and artifact status."""
     seen, unique = {}, []
     preserved_read = False
+    # Cross-page comparisons require more than one full observation. Keep a
+    # bounded working set in addition to the latest read (which remains intact).
+    # This is a soft input target, not another decision or execution limit.
+    comparison_remaining, comparison_reads = 16000, 0
+    full_page_keys, read_inventory, inventory_keys = set(), [], set()
+    for row in reversed(results or []):
+        inherited = row.get('read_inventory', {}).get('sources', [])
+        for source in _read_sources(row) + inherited:
+            key = _read_key(source)
+            if key in inventory_keys:
+                continue
+            inventory_keys.add(key)
+            read_inventory.append(_fields(source, ('id', 'document_id', 'url', 'source_url',
+                                                   'page', 'read_status', 'excerpt_only', 'truncated'), 100))
     for index, row in reversed(list(enumerate(results or []))):
         signature = hashlib.sha256(json.dumps({'tool': row.get('tool'), 'result': row.get('result'),
                        'validation_feedback': row.get('validation_feedback'), 'error': row.get('error')},
@@ -237,17 +276,31 @@ def compact_tool_results(results, max_chars=10000):
         item = _fields(row, ('tool', 'reused_from_step_id', 'validation_feedback', 'error'), 1200)
         item['_context_order'] = index
         if 'result' in row:
-            full_read = not preserved_read and row.get('tool') in ('read_document', 'read_public_pdf', 'read_webpage', 'read_web_page')
-            read_result = row.get('result') or {}
-            has_body = isinstance(read_result, dict) and (str(read_result.get('text') or '').strip() or any(
-                isinstance(source, dict) and str(source.get('text') or '').strip()
-                for key in ('snippets', 'results') for source in read_result.get(key, [])))
-            full_read = bool(full_read and has_body and not read_result.get('error') and
-                             read_result.get('status') not in ('error', 'failed', 'excluded', 'excluded_after_cutoff', 'needs_ocr'))
-            item['result'] = _tool_result(row['result'], len(unique) < 2, full_read)
+            sources = _read_sources(row)
+            first_read = bool(sources and not preserved_read)
+            fresh = [s for s in sources if _read_key(s) not in full_page_keys]
+            additional_read = bool(not first_read and fresh and comparison_reads < 3 and
+                                   size(fresh) <= comparison_remaining)
+            full_read = first_read or additional_read
+            read_result = row['result']
+            if additional_read:
+                read_result = deepcopy(read_result)
+                for key in ('snippets', 'results'):
+                    if isinstance(read_result.get(key), list):
+                        read_result[key] = [s for s in read_result[key] if s in fresh]
+                comparison_remaining -= size(fresh)
+                comparison_reads += 1
+            item['result'] = _tool_result(read_result, len(unique) < 2, full_read)
             if full_read:
                 item['full_read_observation'] = True
                 preserved_read = True
+                full_page_keys.update(_read_key(s) for s in sources)
+                if first_read:
+                    item['read_inventory'] = {
+                        'sources': read_inventory[:60],
+                        'omitted_source_count': max(0, len(read_inventory) - 60),
+                        'note': '这些来源已取得正文，未展示全文不表示未读。先用已保留正文完成跨页对照；仅在缺少所需原句时按定位重新读取。节选不代表整页已完整读取。',
+                    }
         if row.get('repeated_observations'):
             item['repeated_observations'] = row['repeated_observations']
         seen[signature] = item
@@ -265,7 +318,7 @@ def compact_tool_results(results, max_chars=10000):
     # most of this input. This prevents a short context from implying a report,
     # attachment or valuation was never saved.
     for row in ordered[2:]:
-        if not state_record(row) or not isinstance(row.get('result'), dict):
+        if row.get('full_read_observation') or not state_record(row) or not isinstance(row.get('result'), dict):
             continue
         original = row['result']
         row['result'] = _fields(original, ('artifact', 'run_id', 'revision', 'report_revision', 'id',

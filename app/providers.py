@@ -2,6 +2,7 @@ from . import competition
 import json
 import time
 import httpx
+from urllib.parse import urlparse
 from .config import settings
 
 class ProviderError(Exception):
@@ -252,6 +253,9 @@ def model_json(system, payload, max_tokens=2400, profile_id=None, reasoning=Fals
                 pass
             attempt.update(status="http_error", http_status=error.response.status_code,
                            elapsed_ms=int((time.monotonic() - attempt_started) * 1000))
+            if error.response.status_code == 402:
+                reason = 'DeepSeek 账户余额不足' if urlparse(cfg['base']).hostname == 'api.deepseek.com' else '模型服务的计费或账户额度限制'
+                fail(f"模型接口返回 HTTP 402：{reason}。这与本轮 Token 或时间预算不同，请在服务商账户处理余额，或在连接设置切换可用连接后继续；已有材料和草稿已保留", "http_error")
             fail(f"模型接口返回 HTTP {error.response.status_code}；请检查当前服务的密钥、模型名、接口协议和输出额度", "http_error")
         except httpx.TimeoutException:
             attempt.update(status="timeout", elapsed_ms=int((time.monotonic() - attempt_started) * 1000))

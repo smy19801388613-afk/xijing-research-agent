@@ -3,12 +3,13 @@ import hashlib
 import html
 import io
 import json
+import logging
 import re
 import uuid
 import zipfile
 from datetime import date
 from pathlib import Path
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager,suppress
 from urllib.parse import urlparse
 from fastapi import FastAPI,HTTPException,UploadFile,File,Form,Request,Body
 from fastapi.responses import FileResponse,Response,StreamingResponse,JSONResponse
@@ -26,9 +27,19 @@ from .exporting import markdown,printable
 async def lifespan(app):
     store.connection().close()
     documents.seed()
-    yield
+    await asyncio.to_thread(runtime.reconcile)
+    async def reconcile_workers():
+        while True:
+            await asyncio.sleep(5)
+            try: await asyncio.to_thread(runtime.reconcile)
+            except Exception: logging.exception('Unable to reconcile research worker states')
+    watcher=asyncio.create_task(reconcile_workers())
+    try: yield
+    finally:
+        watcher.cancel()
+        with suppress(asyncio.CancelledError): await watcher
 
-app=FastAPI(title="研序 · 对话投研 Agent",version=VERSION,lifespan=lifespan)
+app=FastAPI(title="析鲸AI · 对话投研 Agent",version=VERSION,lifespan=lifespan)
 
 @app.middleware("http")
 async def local_origin(request:Request,call_next):
@@ -58,7 +69,9 @@ async def provider_error(request,error):
     return JSONResponse({"detail":str(error)},status_code=502)
 
 def launch(run):
-    runtime.launch('run',run['id'])
+    try: runtime.launch('run',run['id'])
+    except Exception:
+        raise ValueError('无法启动本地研究进程，任务已保留') from None
     return run
 
 @app.get("/api/health")
@@ -115,6 +128,7 @@ def restore(kind:str,identity:str): return store.restore_item(kind,identity)
 def create(request:RunRequest):
     if request.document_id: store.get_document(request.document_id)
     payload=request.model_dump(mode="json");config=connections.load()
+    if payload.get('execution_budget') is None: payload['execution_budget']=config.get('execution_budget')
     if payload["data_source"]=="default": payload["data_source"]=config["data_source"]
     if competition.POLICY["enabled"] and payload["mode"]=="live": payload["data_source"]="documents"
     payload["model_profile"]=payload["model_profile"] or config["active_model"]

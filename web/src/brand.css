@@ -1,0 +1,16 @@
+/* 析鲸AI identity; theme colors inherit bauhinia purple from design-system.css. */
+.brand { gap: 8px; font-size: 20px; letter-spacing: .2px; }
+.brand-name { white-space: nowrap; color: var(--accent); }
+.brand .brand-mark { width: 38px; height: 38px; flex-shrink: 0; background: transparent; border: 0; }
+.brand-mark img { display: block; width: 100%; height: 100%; object-fit: contain; }
+.brand-version { font-size: 10px; }
+.agent-symbol { width: 104px; height: 104px; margin-bottom: 20px; border: 0; border-radius: 0; background: transparent; }
+.agent-symbol img { width: 104px; height: 104px; object-fit: contain; }
+.message-avatar:has(img) { background: var(--accent-soft); }
+.message-avatar img { display: block; width: 100%; height: 100%; object-fit: contain; }
+@media (max-width: 680px) {
+  .brand { padding: 0; justify-content: center; }
+  .brand .brand-mark { width: 36px; height: 36px; }
+  .agent-symbol { width: 84px; height: 84px; }
+  .agent-symbol img { width: 84px; height: 84px; }
+}

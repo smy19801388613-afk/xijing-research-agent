@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState} from 'react';
-import {Activity,ArrowDownToLine,ArrowRight,ArrowUpRight,BookOpen,Check,CheckCircle2,ChevronRight,Clock3,Database,ExternalLink,FileSearch,FileText,FolderOpen,GitCompareArrows,History,Layers3,LoaderCircle,Plus,Search,Settings2,ShieldCheck,SlidersHorizontal,Sparkles,Square,Upload,X,AlertCircle,Command,MessageSquare,Trash2} from 'lucide-react';
+import {Activity,ArrowDownToLine,ArrowRight,ArrowUpRight,BookOpen,Check,CheckCircle2,ChevronRight,Clock3,Database,ExternalLink,FileSearch,FileText,FolderOpen,GitCompareArrows,History,LoaderCircle,Plus,Search,Settings2,ShieldCheck,SlidersHorizontal,Sparkles,Square,Upload,X,AlertCircle,Command,MessageSquare,Trash2} from 'lucide-react';
 
 import AgentChat from './AgentChat';
 import CompetitionPanel from './CompetitionPanel';
@@ -74,7 +74,7 @@ export default function App(){
 
   return <div className="app-shell">
     <aside className="sidebar">
-      <button className="brand" aria-label="研序首页" onClick={()=>setTab('chat')}><span className="brand-mark"><Layers3 size={23}/></span><span>研序</span><span className="brand-version" title="当前运行的应用版本">{config.version?'v'+config.version:''}</span></button>
+      <button className="brand" aria-label="析鲸AI首页" onClick={()=>setTab('chat')}><span className="brand-mark"><img src="/brand/xijing-emblem.png" alt="" width="38" height="38"/></span><span className="brand-name">析鲸AI</span><span className="brand-version" title="当前运行的应用版本">{config.version?'v'+config.version:''}</span></button>
       <button className="new-research" aria-label="新建研究" onClick={()=>setShowNew(true)}><Plus size={17}/><span>新建研究</span></button>
       <nav aria-label="研究导航">{[[MessageSquare,'chat'],[BookOpen,'overview'],[SlidersHorizontal,'model'],[ShieldCheck,'audit'],[FileSearch,'questions'],[History,'history']].map(([Icon,id]:any)=><button key={id} aria-label={labels[id]} title={labels[id]} aria-current={tab===id?'page':undefined} className={tab===id?'active':''} onClick={()=>setTab(id)}><Icon size={18}/><span>{labels[id]}</span></button>)}</nav>
       <nav className="secondary-nav" aria-label="资料与设置">{[[FolderOpen,'library'],[Settings2,'settings'],[ShieldCheck,'competition'],[Trash2,'trash']].map(([Icon,id]:any)=><button key={id} aria-label={labels[id]} title={labels[id]} aria-current={tab===id?'page':undefined} className={tab===id?'active':''} onClick={()=>setTab(id)}><Icon size={18}/><span>{labels[id]}</span></button>)}</nav>

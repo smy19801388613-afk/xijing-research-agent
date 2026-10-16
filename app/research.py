@@ -3,20 +3,24 @@ from . import competition
 import json
 import re
 import time
+from functools import wraps
 from datetime import datetime,timezone
 from decimal import Decimal
-from . import store
+from . import store, execution_budget
 from .config import DATA,FIXTURES
 from .documents import SAMPLE_ID,extract,search_pages
-from .finance import METRICS,number,eligible_record,compute,audit_text
+from .finance import METRICS,number,eligible_record,compute,audit_text,comparison_check
 from .providers import tushare,model_json,ProviderError
 
 class Cancelled(Exception): pass
 
 def step(run,label,progress,detail="",kind="info"):
     if store.cancelled(run["id"]): raise Cancelled()
-    if run.get("started_at") and (datetime.now(timezone.utc)-datetime.fromisoformat(run["started_at"])).total_seconds()>900:
-        raise ProviderError("本次研究达到 15 分钟执行预算，已保留之前取得的事实")
+    deadline=execution_budget.deadline()
+    if deadline is not None and time.monotonic()>=deadline:
+        from .budget_timeout import expire_run
+        expire_run(run['id'])
+        raise store.ExecutionStopped()
     run["events"].append({"time":store.now(),"label":label,"detail":detail,"kind":kind})
     run["progress"]=progress
     store.save_run(run)
@@ -155,6 +159,20 @@ def model_research(run,pages,doc):
         gap(run,"model_unavailable",str(error))
         run["model"]={"status":"failed","calls":calls,"detail":str(error)}
 
+def with_research_budget(fn):
+    @wraps(fn)
+    def wrapped(run_id):
+        # Inline start_research inherits the chat's cumulative ledger and timer.
+        if execution_budget.current() is not None: return fn(run_id)
+        run=store.ensure_run_budget(run_id)
+        remaining=(datetime.fromisoformat(run['execution_deadline_at'])-datetime.now(timezone.utc)).total_seconds()
+        with execution_budget.scope(run['execution_budget'],deadline_at=time.monotonic()+remaining,
+                on_usage=lambda usage:store.record_run_budget_usage(run_id,usage)):
+            return fn(run_id)
+    return wrapped
+
+
+@with_research_budget
 @competition.traced("research", "run_id")
 def execute(run_id):
     run=store.get_run(run_id); started=time.monotonic(); run["state"]="running"; req=run["request"]
@@ -227,7 +245,7 @@ def execute(run_id):
             run["state"]="blocked";gap(run,"no_facts","没有可用于本次研究的财务事实");store.save_run(run);return
         run["calculations"]=compute(run["facts"],req["year"])
         for calc in run["calculations"]:
-            if calc["value"] is None: gap(run,calc["id"],calc["reason"])
+            if calc["value"] is None and calc.get('change') is None: gap(run,calc["id"],calc["reason"])
         gap(run,"research_scope","当前仅覆盖核心财务与已提供材料；经营归因、营运资本和完整估值需要补充证据")
         gap(run,"pit_version","已按公告日期筛选；供应商历史修订版本的完整性尚不能独立保证")
         run["memo"]=base_memo(run)
@@ -250,11 +268,22 @@ def execute(run_id):
         elif req["mode"]=="live": run["model"]={"status":"disabled","detail":"本次仅核对财务，不调用模型"}
         step(run,"检查研究产物",94,"校验来源引用、核心数值、缺口与产物状态")
         run["checks"] += [
-            {"kind":"calculation","passed":all(c["value"] is not None for c in run["calculations"]),"label":"核心同比计算","detail":"Decimal 计算；零或负基期保留金额变化"},
+            comparison_check(run["calculations"]),
             {"kind":"references","passed":all(f["evidence_ids"] for f in run["facts"]),"label":"财务事实均有来源","detail":"支持查看 PDF 页或接口原始字段"},
             {"kind":"scope","passed":True,"label":"研究范围和缺口已披露","detail":"未输出无依据评级；模型判断保留为待人工复核的草稿"}]
         run["state"]="completed_with_gaps";run["elapsed_ms"]=int((time.monotonic()-started)*1000)
         step(run,"完成研究底稿",100,"财务数据可复核，研究判断和缺失材料需要继续核实")
+        return
+    except execution_budget.BudgetExhausted:
+        run=store.get_run(run_id)
+        run.update(state='failed',stop_reason='token_limit',budget_exhausted={'reason':'token_limit','usage':execution_budget.snapshot(),'at':store.now()})
+        gap(run,'token_limit','本次累计 Token 额度不足，已保留取得的事实、材料和已保存报告')
+        store.save_run(run)
+        raise
+    except store.ConcurrentRunUpdate:
+        store.fail_execution('run',run_id,reason='write_conflict',
+            message='执行期间研究被其他操作修改，旧快照未覆盖新结果；请基于当前保存状态继续。')
+        return
     except Cancelled:
         run=store.get_run(run_id)
         run["state"]="cancelled";run["events"].append({"time":store.now(),"label":"研究已取消","detail":"保留已取得的证据，可创建新的重试版本","kind":"warning"})
@@ -265,5 +294,7 @@ def execute(run_id):
         run["state"]="failed";gap(run,"unexpected","研究执行遇到异常，已保留之前步骤的证据，请重试或检查本机日志")
         import traceback
         traceback.print_exc()
-    finally:
-        store.save_run(run)
+    try: store.save_run(run)
+    except store.ConcurrentRunUpdate:
+        store.fail_execution('run',run_id,reason='write_conflict',
+            message='执行期间研究被其他操作修改，旧快照未覆盖新结果；请基于当前保存状态继续。')

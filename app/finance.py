@@ -51,9 +51,31 @@ def compute(facts, year):
         g=growth(current.get("value") if current else None, previous.get("value") if previous else None)
         if any(f and f.get("status")=="conflict" for f in (current,previous)):
             g={"value":None,"reason":"本期或基期存在来源冲突，核实后再计算同比"}
-        result.append({"id":f"yoy-{metric}","metric":metric,"label":METRICS[metric]["label"],"kind":"yoy","unit":"%",
-                       "formula":"(本期值 / 上期值 - 1) × 100","inputs":[f["id"] for f in (current,previous) if f],**g})
+        amount_only = g.get('value') is None and number(g.get('change')) is not None
+        result.append({"id":f"yoy-{metric}","metric":metric,"label":METRICS[metric]["label"],"kind":"yoy","unit":"元" if amount_only else "%",
+                       "formula":"本期值 - 上期值" if amount_only else "(本期值 / 上期值 - 1) × 100","inputs":[f["id"] for f in (current,previous) if f],**g})
     return result
+
+def comparison_check(calculations):
+    """A nonpositive baseline has a valid amount comparison, not a failed ratio."""
+    return {"kind":"calculation", "passed":bool(calculations) and all(
+        number(c.get('value')) is not None or number(c.get('change')) is not None for c in calculations),
+        "label":"核心同比计算", "detail":"Decimal 计算；正基期计算增长率，零或负基期计算金额变化"}
+
+
+def comparison_view(run):
+    """Correct legacy presentation metadata without rewriting stored audit records."""
+    calculations = [dict(c) for c in run.get('calculations', [])]
+    amount_ids = set()
+    for calc in calculations:
+        if calc.get('kind') == 'yoy' and calc.get('value') is None and number(calc.get('change')) is not None:
+            calc.update(formula='本期值 - 上期值', unit='元')
+            amount_ids.add(calc.get('id'))
+    checks = [comparison_check(calculations) if c.get('kind') == 'calculation' and c.get('label') == '核心同比计算'
+              else dict(c) for c in run.get('checks', [])]
+    return {**run, 'calculations':calculations, 'checks':checks,
+            'gaps':[g for g in run.get('gaps', []) if g.get('code') not in amount_ids]}
+
 
 def scenario(profit, growth_pct, pe, shares=None):
     p,g,m=number(profit),number(growth_pct),number(pe)

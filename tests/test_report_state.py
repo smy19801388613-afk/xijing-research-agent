@@ -1,7 +1,7 @@
 from copy import deepcopy
 from decimal import Decimal
 import pytest
-from app import deep_research, finance, store, valuation
+from app import deep_research, finance, store, valuation, questions
 from app.report_state import report_valuation_status, valuation_snapshot
 
 
@@ -101,6 +101,7 @@ def test_snapshot_before_generation_detects_change_during_model_call(run):
     assert status(run)["state"] == "changed"
     assert status(run)["basis"] == "snapshot"
     assert len(store.get_run(run["id"])["memo"]["valuation_context"]["scenarios"]) == 1
+    assert questions.report_sync(store.get_run(run['id']))['needs_update']
 
 
 def test_empty_generation_snapshot_detects_first_scenario(run):

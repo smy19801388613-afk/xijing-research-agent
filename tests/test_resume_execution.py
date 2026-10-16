@@ -4,6 +4,7 @@ import copy
 import pytest
 
 from app import agent, store, deep_research, resume_plan, questions
+from app.task_contract import set_required
 
 
 @pytest.fixture
@@ -24,8 +25,8 @@ def begin(chat, text, **kwargs):
 
 def saved_report_task(chat, request='联网搜索并阅读关键原文，开展深度研究，生成完整研究备忘录。', steps=()):
     first = begin(chat, request)
-    store.update_conversation(chat['id'], lambda c: c['turn_contexts'][first['turn_id']].update(
-        required_artifacts=sorted(agent.requested_artifacts(request))))
+    store.update_conversation(chat['id'], lambda c: set_required(c['turn_contexts'][first['turn_id']],
+        agent.requested_artifacts(request)))
     store.update_run(chat['run_id'], lambda r: r.update(report_revision=2))
     fingerprint = agent.report_input_fingerprint(store.get_run(chat['run_id']))
     report_step = {'id': 'saved-report', 'turn_id': first['turn_id'], 'tool': 'refine_investment_memo',
@@ -66,13 +67,56 @@ def test_saved_report_does_not_satisfy_unexecuted_retrieval(chat, monkeypatch):
     monkeypatch.setattr(agent, 'model_json', model)
     agent.execute(chat['id'])
     saved = store.get_conversation(chat['id'])
-    assert calls == ['search', 'read', 'report'], (saved['state'], saved['messages'][-1]['content'], saved['steps'])
+    # Retrieval fulfils its own obligation; merely adding uncited material does
+    # not mutate report dependencies or justify regenerating the saved report.
+    assert calls == ['search', 'read'], (saved['state'], saved['messages'][-1]['content'], saved['steps'])
     assert seen[0]['research_plan']['previous_pending']
     assert seen[0]['research_plan']['pending_questions'][0]['next_action'] == '查阅资本开支现金流明细'
     assert saved['messages'][-1]['delivery']['report_revision_before'] == 2
-    assert saved['messages'][-1]['delivery']['report_revision_after'] == 3
+    assert saved['messages'][-1]['delivery']['report_revision_after'] == 2
     assert saved['messages'][-1]['coverage']['search_calls'] == 1
     assert saved['messages'][-1]['coverage']['body_sources'] == 1
+
+
+def test_new_user_correction_invalidates_cached_report_and_delivery(chat):
+    continued=saved_report_task(chat,request='只用已有原文生成并保存深度报告，不联网。')
+    assert agent.report_step_for_input(continued,store.get_run(chat['run_id']))
+    def correction(c):
+        ctx=c['turn_contexts'][c['turn_id']]
+        ctx['user_text']='继续，纠正现金流风险的过强表述，并补充已读BIP收入后保存报告。'
+        c['messages'][-1]['content']=ctx['user_text']
+    store.update_conversation(chat['id'],correction)
+    corrected=store.get_conversation(chat['id'])
+    run=store.get_run(chat['run_id'])
+    assert agent.reusable_step(corrected,'refine_investment_memo',{}) is None
+    assert agent.report_step_for_input(corrected,run) is None
+    assert '保存研究报告' in agent.delivery_state(corrected,run)['pending']
+    # A legacy wrong cache hit in this new turn cannot establish satisfaction.
+    store.update_conversation(chat['id'],lambda c:c['steps'].append({
+        'id':'bad-reuse','turn_id':c['turn_id'],'tool':'refine_investment_memo','state':'completed',
+        'result':{'artifact':'report','revision':2},'report_input_fingerprint':agent.report_input_fingerprint(run),
+        'reused_from_step_id':'saved-report'}))
+    assert agent.report_step_for_input(store.get_conversation(chat['id']),run) is None
+    # The new request can be satisfied only by a report carrying its own input.
+    store.update_conversation(chat['id'],lambda c:c['steps'].append({
+        'id':'corrected-report','turn_id':c['turn_id'],'tool':'refine_investment_memo','state':'completed',
+        'result':{'artifact':'report','revision':3},'report_input_fingerprint':agent.report_input_fingerprint(run),
+        'report_request_fingerprint':agent.report_request_fingerprint(c)}))
+    current=store.get_conversation(chat['id'])
+    store.update_run(chat['run_id'],lambda r:r.update(report_revision=3))
+    run=store.get_run(chat['run_id'])
+    assert agent.report_step_for_input(current,run)['id']=='corrected-report'
+
+
+def test_request_fingerprint_keeps_prior_steering_when_later_turn_only_says_continue(chat):
+    continued=saved_report_task(chat,request='只用已有原文修订并保存报告，不联网。')
+    turn=continued['turn_id'];ctx=continued['turn_contexts'][turn]
+    ctx['user_text']='纠正海外占比同比方向。'
+    before=agent.report_request_fingerprint(continued)
+    continued['turn_contexts']['next']={**ctx,'user_text':'继续','resume_from_turn_id':turn,
+        'task_turn_ids':ctx['task_turn_ids']+['next']}
+    continued['turn_id']='next'
+    assert agent.report_request_fingerprint(continued)==before
 
 
 def test_new_turn_can_reach_saved_source_without_new_search_steps(chat):
@@ -131,7 +175,7 @@ def test_continuation_guard_honors_restrictions(chat, monkeypatch, restriction):
     agent.execute(chat['id'])
     saved = store.get_conversation(chat['id'])
     assert not [s for s in saved['steps'] if s['turn_id'] == saved['turn_id']]
-    assert saved['messages'][-1]['delivery']['can_resume']
+    assert saved['messages'][-1]['delivery']['can_resume'] == ('不使用任何工具' not in restriction)
 
 
 def test_recovery_can_continue_beyond_legacy_decision_limit(chat, monkeypatch):

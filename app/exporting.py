@@ -4,8 +4,9 @@ import re
 from copy import deepcopy
 from html import escape
 from decimal import Decimal
-from .finance import METRICS,number
+from .finance import METRICS,number,comparison_view
 from .fact_state import verification
+from .review_state import issue_text
 
 DOCUMENT_LINK = re.compile(r'(?:https?://(?:127\.0\.0\.1|localhost)(?::\d+)?)?/api/documents/([\w-]+)/file')
 
@@ -47,7 +48,7 @@ def legacy_scenario_summary(value):
 
 def delivery_note(run, audit, packaged):
     scope='完整审计底稿，包含全部历史版本及原始记录。' if audit else '当前报告；完整历史版本、原始计算和运行记录保留在完整审计导出及证据包中。'
-    links='已打包的 PDF 使用相对路径；外部链接需联网，详见 manifest.json。' if packaged else '本地 PDF 链接需在运行研序服务的本机打开；转交他人请使用完整证据包。'
+    links='已打包的 PDF 使用相对路径；外部链接需联网，详见 manifest.json。' if packaged else '本地 PDF 链接需在运行析鲸AI服务的本机打开；转交他人请使用完整证据包。'
     from .questions import report_sync
     sync=report_sync(run)
     status=(' '+sync['message']+' 问题清单展示当前研究记录，报告正文保留原版本。') if sync['needs_update'] else ''
@@ -134,6 +135,7 @@ def prose_html(value):
     return ''.join('<p>'+re.sub(r'\*\*([^*]+)\*\*',r'<strong>\1</strong>',escape(p)).replace('\n','<br>')+'</p>' for p in str(value).split('\n\n') if p.strip())
 
 def markdown(run, audit=False, document_paths=None):
+    if not audit: run = comparison_view(run)
     run=rewrite_document_links(run,document_paths) if document_paths is not None else deepcopy(run)
     req=run["request"];memo=run.get("memo") or {}
     lines=[f"# {memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究'}",f"研究问题：{req['question']}",
@@ -175,7 +177,7 @@ def markdown(run, audit=False, document_paths=None):
         for s in memo['sources']:
             lines += ['- '+reference_markdown(memo,[s['id']])+' | '+s.get('read_status',s.get('status',s['kind']))+' | 披露日期：'+str(s.get('published_at') or '待核实')]
     if memo.get('review'):
-        lines += ['\n## 反方审阅记录',memo['review']['semantic_status']]+['- '+str(v) for v in memo['review'].get('issues',[])]
+        lines += ['\n## 反方审阅记录',memo['review'].get('semantic_status','历史审阅记录，状态待复核')]+['- '+issue_text(v) for v in memo['review'].get('issues',[])]
     lines += ["\n## 待核实与限制"]+["- "+g["message"] for g in run["gaps"]]+["- "+s for s in memo.get("limitations",[])]
     lines += ["\n## 数据与计算证据"]
     for e in run["evidence"]:
@@ -196,6 +198,7 @@ def markdown(run, audit=False, document_paths=None):
     return re.sub(r"(\|[^\n]*\|)\n\n(?=\|)",r"\1\n","\n\n".join(lines))
 
 def printable(run, audit=False, document_paths=None):
+    if not audit: run = comparison_view(run)
     run=rewrite_document_links(run,document_paths) if document_paths is not None else deepcopy(run)
     req=run["request"];memo=run.get("memo") or {}
     def e(value): return escape(str(value))
@@ -217,7 +220,7 @@ def printable(run, audit=False, document_paths=None):
     if memo.get('sources'):
         sections.append('<h2>研究来源目录</h2>'+''.join('<article><h3>'+reference_html(memo,[s['id']])+'</h3><p class="muted">'+e(s.get('read_status',s.get('status',s['kind'])))+' · 披露日期 '+e(s.get('published_at') or '待核实')+'</p><details><summary>来源摘录</summary>'+prose_html(s.get('text',''))+'</details></article>' for s in memo['sources']))
     if memo.get('review'):
-        sections.append('<details><summary>反方审阅记录</summary><p>'+e(memo['review']['semantic_status'])+'</p><ul>'+''.join('<li>'+e(v)+'</li>' for v in memo['review'].get('issues',[]))+'</ul></details>')
+        sections.append('<details><summary>反方审阅记录</summary><p>'+e(memo['review'].get('semantic_status','历史审阅记录，状态待复核'))+'</p><ul>'+''.join('<li>'+e(issue_text(v))+'</li>' for v in memo['review'].get('issues',[]))+'</ul></details>')
     limitations=[g["message"] for g in run["gaps"]]+memo.get("limitations",[])
     sources=[]
     for source in run["evidence"]:
@@ -248,7 +251,7 @@ def printable(run, audit=False, document_paths=None):
     events="".join("<li>"+e(v["time"])+" · "+e(v["label"])+"："+e(v["detail"])+"</li>" for v in run["events"])
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>{e(run['company'])} · 研究底稿</title>
 <style>body{{font:14px/1.85 system-ui,"Microsoft YaHei",sans-serif;color:#334155;margin:45px auto;padding:0 28px;max-width:980px}}header{{border-bottom:3px solid #a02070;padding-bottom:24px}}.brand{{font-size:12px;letter-spacing:2px;color:#64748b}}h1{{font-size:29px;margin:14px 0}}h2{{margin-top:34px;font-size:20px;color:#475569}}h3{{font-size:15px}}.muted{{font-size:12px;color:#64748b}}table{{width:100%;border-collapse:collapse;text-align:right;font-variant-numeric:tabular-nums}}td,th{{padding:12px;border-bottom:1px solid #e2e8f0}}thead{{background:#f8fafc}}th:first-child{{text-align:left}}.summary,.counter{{padding:18px;background:#fcf6fa;border-left:3px solid #e5bed5}}.thesis{{margin:22px 0}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 monospace;background:#f8fafc;padding:15px;border:1px solid #e2e8f0}}a{{color:#a02070}}li{{margin:7px 0}}details{{margin:18px 0}}summary{{cursor:pointer;font-weight:600}}footer{{border-top:1px solid #e2e8f0;margin-top:35px;padding-top:16px}}@media print{{body{{margin:0;max-width:none;font-size:11px}}h2,h3{{break-after:avoid}}tr,.counter{{break-inside:avoid}}.print-hint{{display:none}}}}</style></head><body>
-<header><div class="brand">研序 RESEARCH DESK · {e(memo.get('generator_version',run['version']))} · 报告第 {run.get('report_revision',1)} 版</div><h1>{e(memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究')}</h1>
+<header><div class="brand">析鲸AI RESEARCH DESK · {e(memo.get('generator_version',run['version']))} · 报告第 {run.get('report_revision',1)} 版</div><h1>{e(memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究')}</h1>
 <p>{e(req['question'])}</p><p class="muted">截止日 {req['as_of']} · {'样例回放' if req['mode']=='sample' else '实时研究'} · {e(run['state'])} · 模型状态 {e(run['model']['status'])}</p><p class="muted">{e(delivery_note(run,audit,document_paths is not None))}</p><p class="muted print-hint">浏览器按 Ctrl + P 可打印或保存 PDF。</p></header>
 <h2>核心财务事实</h2><p class="muted">人民币亿元，年度合并报表。归母净利润为归属于母公司股东口径。</p>
 <table><thead><tr><th>指标</th><th>{req['year']}</th><th>{req['year']-1}</th><th>同比 / 金额变化</th><th>本期来源状态</th></tr></thead><tbody>{''.join(rows)}</tbody></table>

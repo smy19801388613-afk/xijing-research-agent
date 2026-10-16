@@ -101,6 +101,77 @@ def test_powers_of_ten_detection_not_hardcoded_to_company_or_amount():
     assert not check("2024年海运业务246.80亿元", source)
 
 
+@pytest.mark.parametrize('header,label,raw,wrong,correct', [
+    ('单位：千元', '经营性应付项目的增加', '89,965,735', '89.97', '899.66'),
+    ('（人民币百万元，特别注明除外）', '归属于本行股东权益', '1,272,875', '1272.88', '12728.75'),
+    ('单位：人民币百万元', '经营活动产生的现金流量净额', '451,457', '451.46', '4514.57'),
+])
+def test_thousands_and_bank_millions_conversion(header, label, raw, wrong, correct):
+    source = {'id': 'currency', 'title': '2025年年度报告', 'text': f'{header}\n{label} {raw}'}
+    assert check(f'2025年{label}{wrong}亿元', source)[0]['expected'] == correct + '亿元'
+    assert not check(f'2025年{label}{correct}亿元', source)
+
+
+def test_inline_thousands_are_not_yuan_and_other_currency_not_assumed():
+    source = {'id': 'currency', 'title': '2025年年度报告', 'text': '海运业务89,965,735千元'}
+    assert check('2025年海运业务89.97亿元', source)[0]['expected'] == '899.66亿元'
+    source['text'] = '（美元千元）\n海运业务89,965,735'
+    assert source_amounts(source) == []
+    for header in ('（美元千元）', '单位：千元 币种：美元'):
+        source['text'] = '单位：万元\n其他业务 1,000,000\n' + header + '\n海运业务89,965,735'
+        assert not check('2025年海运业务89.97亿元', source)
+
+
+def test_public_pdf_report_heading_can_supply_missing_title_period():
+    source = {'id': 'half', 'title': '某公司 · 第16页', 'published_at': '2026-08-22',
+              'text': '某公司2026 年半年度报告全文\n单位：千元\n动力电池系统 192,124,890'}
+    findings = check('2026年半年度动力电池系统营业收入192.12亿元', source)
+    assert findings[0]['expected'] == '1921.25亿元'
+    assert not check('2025年半年度动力电池系统营业收入192.12亿元', source)
+    source['text'] = '2026年上半年市场景气变化\n单位：千元\n动力电池系统 192,124,890'
+    assert source_amounts(source)[0].year is None
+    assert not check('2026年半年度动力电池系统营业收入192.12亿元', source)
+
+
+HALF_YEAR_ROWS={'id':'catl-half-p7','title':'宁德时代新能源科技股份有限公司 · 第7页',
+    'text':'''宁德时代新能源科技股份有限公司 2026 年半年度报告全文
+项目 本报告期 上年同期 本报告期比上年同期增减
+营业收入（千元） 276,916,580 178,886,253 54.80%
+归属于上市公司股东的净利润
+（千元） 43,284,002 30,485,139 41.98%
+经营活动产生的现金流量净额
+（千元） 60,216,851 58,687,066 2.61%
+基本每股收益（元/股） 9.51 6.92 37.43%
+项目 本报告期末 上年度末 本报告期末比上年度末增减
+总资产（千元） 1,138,880,789 974,827,544 16.83%
+'''}
+
+
+def test_row_local_thousands_and_wrapped_metric_keep_prior_half_year_column():
+    values=source_amounts(HALF_YEAR_ROWS)
+    cash=[v for v in values if '经营活动产生的现金流量净额' in v.label]
+    assert [(str(v.value),v.year,v.period_kind) for v in cash]==[
+        ('60216851000',2026,'half'),('58687066000',2025,'half')]
+    assert not any('每股' in v.label for v in values)
+    assert check('2026年上半年经营现金流60.22亿元',HALF_YEAR_ROWS)[0]['expected']=='602.17亿元'
+    assert not check('2026年上半年经营现金流602.17亿元',HALF_YEAR_ROWS)
+    assert not check('2025年上半年经营现金流586.87亿元',HALF_YEAR_ROWS)
+    assert check('2025年上半年经营现金流58.69亿元',HALF_YEAR_ROWS)[0]['expected']=='586.87亿元'
+    assets=[v for v in values if '总资产' in v.label]
+    assert assets[1].year==2025 and assets[1].period_kind=='annual'
+
+
+def test_row_local_unit_does_not_leak_or_override_foreign_currency():
+    source={'id':'mixed','title':'2026年半年度报告','text':'''项目 本报告期 上年同期
+经营活动产生的现金流量净额（人民币千元） 60,216,851 58,687,066
+总股本（股） 4,514,171,500 4,403,500,000
+其他金额 8,000,000 7,000,000
+美元业务（美元千元） 1,234,567 1,111,111
+业务毛利率（%） 20.5 21.5'''}
+    values=source_amounts(source)
+    assert len(values)==2 and all('经营活动' in v.label and v.unit=='千元' for v in values)
+
+
 def test_correct_corresponding_label_prevents_unrelated_amount_false_alarm():
     source = {"id": "rows", "title": "2025年年度报告",
               "text": "单位：万元\n海运业务 246,803.47 135,864.29\n航空业务 2,468,034.71 1,358,642.91"}

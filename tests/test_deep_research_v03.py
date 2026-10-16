@@ -135,6 +135,29 @@ def test_build_repairs_then_saves_once_and_retains_old_memo(run,monkeypatch):
     assert result['artifact']=='report' and len(updated['memo_revisions'])==1
     assert updated['memo']['review']['revision_performed'] and len(updated['deep_research_log']['calls'])==5
 
+
+def test_build_repair_cannot_adopt_concurrently_published_report_as_base(run,monkeypatch):
+    source_run(run)
+    monkeypatch.setattr(deep.documents,'attached_documents',lambda _: [{'ticker':'300271.SZ','year':2025,'title':'2025年年度报告','page_count':194}])
+    monkeypatch.setattr(deep.documents,'ensure_index',lambda _: [])
+    monkeypatch.setattr(deep.documents,'search_attached',lambda *args: {'snippets':[]})
+    monkeypatch.setattr(deep.web_research,'search',lambda q,**kw: {'queries':q,'results':[]})
+    answers=iter([{'queries':['华宇软件 产品 客户'],'pdf_queries':['产品']},
+                  {'queries':[]},candidate(),{'issues':['需要补充反证'],'requires_revision':True},candidate()])
+    calls=[]
+    def model(*args,**kwargs):
+        calls.append(1)
+        if len(calls)==4:
+            other=candidate();other['summary']='另一对话已保存的新判断'
+            deep.save_memo(run['id'],deep.validate_memo(other,store.get_run(run['id'])),'其他对话')
+        return next(answers),{'model':'stub'}
+    monkeypatch.setattr(deep,'model_json',model)
+    with pytest.raises(ValueError,match='其他修订'):
+        deep.build(run['id'],'保存完整深度报告')
+    saved=store.get_run(run['id'])
+    assert saved['memo']['summary']=='另一对话已保存的新判断'
+    assert saved['report_revision']==2 and len(saved['memo_revisions'])==1
+
 def test_search_and_redirect_body_share_source_id_and_preserve_date(run):
     chat={'run_id':run['id']}
     deep.register_sources(chat,{'results':[{'url':'http://example.com/article','title':'披露报道','snippet':'片段','published_at':'2026-08-01'}]})
@@ -193,7 +216,45 @@ def test_refine_reuses_read_sources_and_preserves_valuation_and_history(run,monk
     assert saved['memo_revisions'][0]['memo']==r['memo']
     assert 'web-product' in seen['allowed_reference_ids']
     assert saved['deep_research_attempts'][-1]['mode']=='source_refinement'
+    assert saved['deep_research_attempts'][-1]['base_report_revision']==1
+    assert saved['deep_research_attempts'][-1]['saved_report_revision']==2
     assert '未另行调用反方模型' in saved['memo']['review']['semantic_status']
+
+
+def test_refine_resumes_failed_draft_with_revalidation_and_atomic_save_marker(run,monkeypatch):
+    r=source_run(run)
+    chat=store.new_conversation(r['id'])
+    first=store.begin_turn(chat['id'],'修订并保存报告','stub','documents')
+    attempt_id=store.now()
+    broken=candidate();broken['sections'][0]['evidence_ids']=['missing-source']
+    store.update_run(r['id'],lambda current: current.setdefault('deep_research_attempts',[]).append({
+        'id':attempt_id,'started_at':attempt_id,'run_id':r['id'],'chat_id':chat['id'],
+        'turn_id':first['turn_id'],'task_turn_id':first['turn_id'],'step_id':'failed-report',
+        'base_report_revision':1,'question':'修订并保存报告','repaired_draft':broken,
+        'review':{'issues':['先核对业务引文']}}))
+    def failed(c):
+        c['steps'].append({'id':'failed-report','turn_id':first['turn_id'],'tool':'refine_investment_memo',
+            'state':'failed','started_at':attempt_id,'finished_at':store.now(),
+            'result':{'error':'引用失效'}})
+    store.update_conversation(chat['id'],failed)
+    agent.finish_error(chat['id'],first['turn_id'],'引用失效，报告尚未保存','failed')
+    continued=store.begin_turn(chat['id'],'继续未完成部分','stub','documents',resume_from_turn_id=first['turn_id'])
+    seen=[]
+    def call(system,payload,*args,**kwargs):
+        seen.append(copy.deepcopy(payload))
+        assert payload['working_draft']==broken
+        assert payload['previous_report']['title']=='原报告'
+        assert payload['prior_review_issues']==['先核对业务引文']
+        assert 'missing-source' in payload['working_draft_validation_feedback']
+        return candidate(),{'model':'stub'}
+    monkeypatch.setattr(deep,'model_json',call)
+    result=deep.refine(r['id'],'修订并保存报告',continued)
+    saved=store.get_run(r['id'])
+    assert result['revision']==2 and len(seen)==1
+    assert saved['deep_research_attempts'][0]['repaired_draft']==broken
+    newest=saved['deep_research_attempts'][-1]
+    assert newest['resumed_from_attempt_id']==attempt_id
+    assert newest['saved_report_revision']==saved['report_revision']==2
 
 def test_cancelled_refinement_cannot_overwrite_report(run,monkeypatch):
     from app.research import Cancelled

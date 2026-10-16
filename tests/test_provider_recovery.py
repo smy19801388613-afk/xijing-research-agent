@@ -36,6 +36,24 @@ def completion(content='{"ok":true}', reason="stop", usage=None):
                          "finish_reason": reason}], "usage": usage or {}}
 
 
+@pytest.mark.parametrize('base,reason', [
+    ('https://api.deepseek.com', 'DeepSeek 账户余额不足'),
+    ('https://example.com', '计费或账户额度限制'),
+])
+def test_payment_failure_is_not_misreported_as_local_token_budget(provider, base, reason):
+    cfg, calls, replies, audit = provider
+    cfg['base'] = base
+    request = httpx.Request('POST', base + '/chat/completions')
+    response = httpx.Response(402, json={'error': {'message': 'private-api-key'}}, request=request)
+    replies.append(httpx.HTTPStatusError('rejected', request=request, response=response))
+    with pytest.raises(providers.ProviderError, match=reason) as caught:
+        providers.model_json('test', {}, 3400)
+    assert len(calls) == 1
+    assert '本轮 Token 或时间预算不同' in str(caught.value)
+    assert caught.value.diagnostics['attempts'][0]['http_status'] == 402
+    assert 'private-api-key' not in str(caught.value) + json.dumps(audit)
+
+
 def test_successful_non_reasoning_call_keeps_existing_budget_and_request(provider):
     _, calls, replies, _ = provider
     replies.append(completion())

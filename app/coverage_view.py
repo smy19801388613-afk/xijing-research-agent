@@ -1,22 +1,24 @@
 """Read-only activity views; saved evidence is not proof of a completed answer."""
-from .turn_constraints import coverage, constraints
+from .turn_constraints import coverage
+from .task_contract import current_contract
 
 
 def turn_observation(chat, run=None, message='', turn_id=None):
     tid = turn_id or chat.get('turn_id')
-    ctx = chat.get('turn_contexts', {}).get(tid, {})
-    text = ctx.get('original_request') or next((m.get('content', '') for m in chat.get('messages', [])
-        if m.get('turn_id') == tid and m.get('role') == 'user'), '')
-    required = ctx.get('rules', constraints(text)).get('require_body', False)
+    contract = current_contract(chat, tid)
+    text = contract['active_request']
+    required = contract['completion']['require_body']
     sources = (run or chat).get('research_sources', [])
     steps = chat.get('steps', [])
     current = coverage([s for s in steps if s.get('turn_id') == tid], text, sources, message,
                        run=run, require_body=required)
-    task_ids = set(ctx.get('task_turn_ids') or [tid])
+    task_ids = set(contract['obligation_turn_ids'] or [tid])
     task = coverage([s for s in steps if s.get('turn_id') in task_ids], text, sources, message,
                     run=run, require_body=required)
     current['task_coverage'] = {k: v for k, v in task.items() if k not in ('sources', 'question_coverage')}
     current['task_turn_count'] = len(task_ids)
+    current['task_history_turn_count'] = len(contract['task_turn_ids'] or [tid])
+    current['contract_scope'] = contract['scope']
     current['schema_version'] = 2
     return current
 

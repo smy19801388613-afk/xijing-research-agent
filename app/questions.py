@@ -230,6 +230,17 @@ def freeze_report(run,memo):
     result=deepcopy(memo)
     result['question_snapshot']={**_question_snapshot(run,result),'captured_at':store.now()}
     result['question_coverage']=snapshot(run)
+    from .report_state import dependency_snapshot
+    current=dependency_snapshot(run,result)
+    valuation_context=result.get('valuation_context') or {}
+    captured=current
+    if valuation_context.get('schema_version')==1:
+        captured=dependency_snapshot({**run,'valuation_history':valuation_context.get('scenarios',[])},result)
+    frozen=deepcopy(result.get('_report_dependency_snapshot') or captured)
+    # Answers applied by this save belong to this report; other model inputs
+    # remain frozen so concurrent fact/scenario changes remain visible.
+    frozen['question_evidence']=current['question_evidence']
+    result['dependency_snapshot']=frozen
     return result
 
 
@@ -258,7 +269,10 @@ def report_sync(run):
     previous_sources=saved.get('report_sources',{});current_sources=current['report_sources']
     changed_sources=sorted(sid for sid in set(previous_sources)|set(current_sources) if previous_sources.get(sid)!=current_sources.get(sid))
     cutoff_changed=saved.get('as_of')!=current['as_of']
-    stale=bool(changed or source_changed or changed_sources or cutoff_changed)
+    from .report_state import dependency_snapshot
+    dependency_changed=bool(memo.get('dependency_snapshot') and memo['dependency_snapshot']!=dependency_snapshot(run,memo))
+    stale=bool(changed or source_changed or changed_sources or cutoff_changed or dependency_changed)
     return {'status':'stale' if stale else 'current','needs_update':stale,
             'changed_question_ids':changed,'source_changed_question_ids':source_changed,'changed_source_ids':changed_sources,
-            'message':'问题、证据或研究截止日已变化，报告待同步；现有报告和估值情景尚未改写。' if stale else '报告已关联当前问题与证据版本。'}
+            'dependency_changed':dependency_changed,
+            'message':'问题、证据、财务输入或估值情景已变化，报告待同步；现有报告和估值情景尚未改写。' if stale else '报告已关联当前研究依据。'}

@@ -1,4 +1,5 @@
 import io
+import copy
 import json
 import zipfile
 from datetime import date,datetime,timezone
@@ -215,3 +216,48 @@ def test_history_routes_hidden_until_restore(run):
         assert client.get('/api/trash').json()[0]['kind']=='conversation'
         assert client.post('/api/trash/conversation/'+c['id']+'/restore').status_code==200
         assert client.get('/api/conversations/'+c['id']).status_code==200
+
+
+def test_reupload_full_report_preserves_saved_memo_and_is_idempotent(run,monkeypatch):
+    # Reproduce CATL: a 2025 annual reupload used to rewrite the saved 2026
+    # half-year limitation in place, while still showing the same revision.
+    run.update(report_revision=2,memo={
+        'title':'已保存研究报告','summary':'已查阅2025年度原文',
+        'limitations':['未取得宁德时代2026年半年报/三季报官方原文，2026年公司自身经营数据未核验。',
+                       '未获取年度报告全文，无法进行深入归因分析。']})
+    run['memo_revisions']=[{'revision':1,'memo':{'summary':'原版本'}}]
+    run['gaps']=[{'code':'no_document','message':'尚未提供匹配的年度报告 PDF'},
+                 {'code':'no_document','message':'尚未取得2026年半年报官方原文'}]
+    store.save_run(run);old=copy.deepcopy(run)
+    monkeypatch.setattr(documents,'text_pages',lambda content:['证券代码：000333\n2025 年年度报告全文','财务报表及附注'])
+    c=store.new_conversation(run['id'])
+    with TestClient(main.app) as client:
+        def upload():
+            return client.post('/api/documents',data={'ticker':'000333.SZ','year':'2025','conversation_id':c['id']},
+                files={'file':('annual.pdf',b'%PDF-regression-full-annual','application/pdf')})
+        first=upload();assert first.status_code==200,first.text
+        first_run=store.get_run(run['id']);first_chat=store.get_conversation(c['id'])
+        assert first_run['gaps']==[old['gaps'][1]]
+        assert first_run['memo']==old['memo'] and first_run['memo_revisions']==old['memo_revisions']
+        assert first_run['report_revision']==2
+        count=len(store.list_documents())
+        second=upload();assert second.status_code==200,second.text
+        assert second.json()['id']==first.json()['id'] and len(store.list_documents())==count
+        assert store.get_run(run['id'])==first_run
+        assert store.get_conversation(c['id'])==first_chat
+
+
+@pytest.mark.parametrize('gap',[
+    {'code':'no_document','message':'尚未取得2026年年度报告'},
+    {'code':'no_document','message':'尚未取得2025年半年报和第三季度报告'},
+    {'code':'no_document','message':'尚未取得年度报告','year':2024},
+    {'code':'no_document','message':'尚未取得年度报告','ticker':'601899.SH'},
+    {'code':'no_document','message':'材料仍需补充，报告类型未明确'},
+    {'code':'missing_note','message':'尚未取得2025年年度报告相关附注'},
+])
+def test_annual_attachment_resolves_only_matching_material_gap(run,gap):
+    value=copy.deepcopy(run);value['gaps']=[gap]
+    before=copy.deepcopy(value)
+    doc={'ticker':'000333.SZ','year':2025,'title':'2025年年度报告.pdf'}
+    documents.refresh_material_availability(value,doc,['2025年年度报告全文'])
+    assert value==before

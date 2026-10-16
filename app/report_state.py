@@ -1,6 +1,58 @@
 """Read-only report/scenario relationships; never rewrite an earlier report."""
 from copy import deepcopy
+from decimal import Decimal, InvalidOperation
+import hashlib
+import json
 from .valuation import same_result
+
+
+def _hash(value):
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def report_identity(run):
+    """The published output, independent of source/question dependencies."""
+    return {'revision': run.get('report_revision'), 'memo_hash': _hash(run.get('memo'))}
+
+
+def assert_report_base(run, expected):
+    if expected != report_identity(run):
+        raise ValueError('报告生成期间已有其他修订保存，当前报告未被覆盖；请基于最新报告重新应用本次修改')
+
+
+def _scenario_value(value):
+    if isinstance(value, dict): return {k: _scenario_value(v) for k, v in value.items()}
+    if isinstance(value, list): return [_scenario_value(v) for v in value]
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        try:
+            n = Decimal(str(value))
+            if n.is_finite(): return format(n.normalize(), 'f')
+        except InvalidOperation: pass
+    return value
+
+
+def dependency_snapshot(run, memo=None):
+    """Shared semantic dependencies for report freshness and saved-step reuse.
+
+    An unrelated new article is not a report input until cited or bound to a
+    research question. Facts/calculations and latest scenarios are explicit
+    research inputs; duplicate scenario IDs and operational settings are not.
+    """
+    from . import questions
+    memo = memo if memo is not None else run.get('memo') or {}
+    snapshot = questions._question_snapshot(run, memo)
+    for item in snapshot['questions'].values(): item.pop('revision', None)
+    latest = {v['method']: v for v in run.get('valuation_history', [])}
+    return {'schema_version': 1, 'question_evidence': snapshot,
+            'request': {k: run.get('request', {}).get(k) for k in ('ticker', 'year', 'as_of', 'document_id')},
+            'facts': [{k: v for k, v in f.items() if k != 'verification'} for f in run.get('facts', [])],
+            'calculations': deepcopy(run.get('calculations', [])),
+            'valuations': {method: _scenario_value({k: v.get(k) for k in
+                ('method', 'assumptions', 'fact_ids', 'output', 'formula')}) for method, v in latest.items()}}
+
+
+def dependency_fingerprint(run, memo=None):
+    return _hash(dependency_snapshot(run, memo))
 
 
 def valuation_snapshot(run):

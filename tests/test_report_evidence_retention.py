@@ -116,6 +116,82 @@ def test_priority_cannot_reintroduce_future_sources_or_unobserved_quotes():
     assert all('伪造数字' not in s['text'] for s in sources + extra)
 
 
+def test_explicit_refinement_source_survives_old_citations_without_exceeding_budget():
+    run=crowded_run()
+    target=source('public-web-04a4345dec12','2026年半年度报告全文\n单位：千元\n'
+        +'动力电池系统 192,124,890 152,492,111 20.63% 46.02%\n'
+        +'储能电池系统 53,260,967 40,500,853 23.96% 87.54%\n'
+        +'其他已查阅上下文\n'*130+'境外 87,129,188 61,018,360 29.97% 42.35%',16,
+        title='公司 · 第16页')
+    run['research_sources'].append(target)
+    run['memo']=citations(*(s['id'] for s in run['research_sources'][:-1]))
+    before=copy.deepcopy(run)
+    sources,extra=deep.generation_evidence(run,focus='复用已读的第16页（public-web-04a4345dec12），补充动力/储能和境外数据。')
+    assert sources[0]['id']==target['id'] and sources[0]['text']==target['text']
+    assert sum(len(s.get('text','')) for s in sources+extra)<=65000
+    assert any(s['id']=='noisy-1' for s in sources)
+    assert run==before
+
+
+def test_requested_source_id_must_be_exact_and_eligible():
+    run=crowded_run()
+    run['research_sources'].extend([
+        source('half-page','已读半年度原文',58),
+        source('future','未来材料',59,published_at='2026-10-16')])
+    sources,extra=deep.generation_evidence(run,focus='future invented prefix-half-page-suffix')
+    assert {'future','invented','half-page'}.isdisjoint(s['id'] for s in sources+extra)
+    sources,extra=deep.generation_evidence(run,focus='来源half-page的已读原文')
+    assert sources[0]['id']=='half-page'
+
+
+def test_refine_passes_literal_requested_source_to_initial_and_repair_context(tmp_path,monkeypatch):
+    monkeypatch.setattr(store,'DATA',tmp_path)
+    run=store.create_run({'ticker':'300750.SZ','year':2025,'as_of':'2026-10-15','question':'核对原文'})
+    run.update(company='宁德时代',state='completed_with_gaps',research_sources=crowded_run()['research_sources'])
+    run['research_sources'].append(source('half-page','2026年半年度报告\n储能电池系统 53,260,967',58))
+    store.save_run(run)
+    chat=store.new_conversation(run['id'])
+    calls=[]
+    def model(system,payload,*a,**kw):
+        calls.append(copy.deepcopy(payload))
+        assert payload['sources'][0]['id']=='half-page'
+        assert '53,260,967' in payload['sources'][0]['text']
+        return {'title':'修订稿'},{}
+    def validate(*a,**kw):
+        if len(calls)==1: raise ValueError('测试修复阶段仍应保留指定证据')
+        return {'title':'修订稿'}
+    monkeypatch.setattr(deep,'model_json',model)
+    monkeypatch.setattr(deep,'validate_memo',validate)
+    monkeypatch.setattr(deep,'save_memo',lambda *a,**kw:{'revision':2})
+    assert deep.refine(run['id'],'复用来源half-page，修订报告',chat)['revision']==2
+    assert len(calls)==2
+    attempt=store.get_run(run['id'])['deep_research_attempts'][-1]
+    assert 'half-page' in attempt['input_source_ids'] and 'half-page' in attempt['repair_input_source_ids']
+
+
+def test_noncontiguous_quote_error_identifies_binding_and_bounded_preview():
+    from app import questions
+    run={'id':'quote-check','company':'宁德时代','request':{'year':2025,'as_of':'2026-10-16'},
+         'facts':[],'calculations':[],'evidence':[],'research_sources':[
+             source('p202','单位：元\n原文中间说明。\n经营现金流 100,000.00',202)]}
+    q=questions.create('现金流量表的原文如何？');run['research_questions']=[q]
+    item={'title':'事实与待查','body':'保留真实缺口','counter_evidence':'口径仍需复核','invalidate_if':'后续原文变化',
+          'status':'inference','evidence_ids':['p202']}
+    bad='单位：元 经营现金流 100,000.00'+'不应出现在预览尾部'*80
+    memo={'title':'修订报告','summary':'等待核对','stance':'谨慎观察','theses':[item,copy.deepcopy(item)],
+          'sections':[{'key':key,'body':'保留实际缺口','status':'inference','evidence_ids':['p202']} for key in deep.SECTION_TITLES],
+          'question_answers':[{'question_id':q['id'],'answer':'待进一步核对','status':'partial',
+            'bindings':[{'source_id':'p202','quote':'经营现金流 100,000.00','reason':'原始行值'},
+                        {'source_id':'p202','quote':bad,'reason':'错误拼接'}]}]}
+    with pytest.raises(ValueError,match=r'question_answers\[0\]\.bindings\[1\]\.quote') as error:
+        deep.validate_memo(memo,run)
+    message=str(error.value)
+    assert '来源 p202' in message and '单位：元 经营现金流 100,000.00' in message
+    assert bad not in message and len(message)<500
+    memo['question_answers'][0]['bindings']=memo['question_answers'][0]['bindings'][:1]
+    assert deep.validate_memo(memo,run)['question_answers'][0]['bindings'][0]['quote']=='经营现金流 100,000.00'
+
+
 def test_many_cited_pages_share_budget_instead_of_losing_last_page():
     refs = {f'page-{i}': source(f'page-{i}', f'第{i}页原文' * 1000, i) for i in range(1, 61)}
     sources = deep.bounded_sources(refs, 55000, list(refs))

@@ -3,7 +3,7 @@
 Never upgrade provenance from prose or from an extra PDF merely being attached.
 """
 import re
-from .finance import METRICS, number
+from .finance import METRICS, number, comparison_view
 
 LABELS={'api_single':'接口单源','document_single':'原文单源','cross_source_match':'跨源数值一致',
     'conflict':'来源冲突','ocr_pending':'OCR待复核','missing':'缺失','unverified':'来源未确认','legacy_match':'历史匹配待复核'}
@@ -37,6 +37,7 @@ def fact_view(fact,run):
 
 
 def enrich(run):
+    run = comparison_view(run)
     run['facts']=[fact_view(f,run) for f in run.get('facts',[])]
     return run
 

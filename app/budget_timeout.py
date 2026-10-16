@@ -56,6 +56,8 @@ def expire_conversation(cid, turn_id, deadline_at=None):
                 continue
             run.update(state='failed', stop_reason='time_limit', updated_at=stopped_at,
                        budget_exhausted=exhausted)
+            run['_write_version']=run.get('_write_version',0)+1
+            store.finalize_budget_usage(run)
             run.setdefault('events', []).append({'time': stopped_at, 'label': '达到本轮时间上限',
                 'detail': '已保留完成的研究结果，可继续未完成部分', 'kind': 'warning'})
             connection.execute('UPDATE runs SET cancel=1,state=?,payload=? WHERE id=?',
@@ -81,6 +83,48 @@ def expire_conversation(cid, turn_id, deadline_at=None):
         connection.execute('UPDATE conversations SET cancel=1,updated=?,payload=? WHERE id=?',
             (stopped_at, json.dumps(chat, ensure_ascii=False), cid))
     return chat
+
+
+def run_deadline(run):
+    try:
+        value=datetime.fromisoformat(run['execution_deadline_at'].replace('Z','+00:00'))
+        return value.astimezone(timezone.utc) if value.tzinfo else None
+    except (KeyError,TypeError,ValueError): return None
+
+
+def expire_run(run_id,deadline_at=None):
+    with store.connection() as connection:
+        connection.execute('BEGIN IMMEDIATE')
+        row=connection.execute('SELECT payload FROM runs WHERE id=?',(run_id,)).fetchone()
+        if not row: raise KeyError(run_id)
+        run=json.loads(row[0]);deadline=run_deadline(run)
+        if (run.get('state') not in ('queued','running') or deadline is None
+                or (deadline_at is not None and deadline!=deadline_at) or datetime.now(timezone.utc)<deadline): return run
+        exhausted={'reason':'time_limit','deadline_at':deadline.isoformat(),'stopped_at':store.now(),
+                   'time_minutes':run.get('execution_budget',{}).get('time_minutes')}
+        store._fail_run(connection,run,'time_limit','本次研究达到时间上限，已保留完成的结果，可调整预算后继续。',
+                        {'budget_exhausted':exhausted})
+        return run
+
+
+def watch_run(run_id,exit_process=None):
+    stopped=threading.Event()
+    run=store.ensure_run_budget(run_id);deadline=run_deadline(run)
+    if deadline is None or run.get('state') not in ('queued','running'): return stopped
+    exit_process=exit_process or os._exit
+    seconds=max(0.0,(deadline-datetime.now(timezone.utc)).total_seconds())
+    def expire():
+        if stopped.wait(seconds): return
+        while not stopped.is_set():
+            try:
+                saved=expire_run(run_id,deadline)
+                if saved.get('state') not in ('queued','running'):
+                    exit_process(124)
+                    return
+            except Exception: logging.exception('Unable to persist deadline for run %s; retrying',run_id)
+            if stopped.wait(.1): return
+    threading.Thread(target=expire,name='research-run-deadline',daemon=True).start()
+    return stopped
 
 
 def watch_turn(cid, turn_id, exit_process=None):

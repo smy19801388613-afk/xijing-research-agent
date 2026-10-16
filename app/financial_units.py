@@ -9,12 +9,13 @@ from decimal import Decimal, ROUND_HALF_UP
 import re
 
 
-UNITS = {"元": Decimal(1), "万元": Decimal(10000), "亿元": Decimal(100000000),
+UNITS = {"元": Decimal(1), "千元": Decimal(1000), "万元": Decimal(10000), "百万元": Decimal(1000000), "亿元": Decimal(100000000),
          "万亿元": Decimal(1000000000000)}
 NUMBER = r"[-−－]?\d[\d,，]*(?:\.\d+)?"
-AMOUNT = re.compile(r"(?<![\d.,，])(" + NUMBER + r")\s*(万亿元|亿元|万元|元)(?![/／]?股)")
+AMOUNT = re.compile(r"(?<![\d.,，])(" + NUMBER + r")\s*(万亿元|亿元|百万元|万元|千元|元)(?![/／]?股)")
 NUMBERS = re.compile(NUMBER)
-TABLE_UNIT = re.compile(r"单位\s*[:：]\s*(?:人民币\s*)?(万亿元|亿元|万元|元)(?![/／]?股)")
+TABLE_UNIT = re.compile(r"(?:单位\s*[:：]\s*(?:人民币\s*)?|[（(]\s*人民币\s*)(万亿元|亿元|百万元|万元|千元|元)(?![/／]?股)")
+ROW_UNIT = re.compile(r"[（(]\s*(?:人民币\s*)?(万亿元|亿元|百万元|万元|千元|元)\s*[）)]")
 YEARS = re.compile(r"(?<!\d)(20\d{2})\s*年?")
 SKIP_LABEL = re.compile(r"每\s*(?:\d+\s*)?股|每股|元\s*[/／]\s*股|EPS|比率|比例|占比|同比|毛利率|股息率|[%％]|每吨|单价", re.I)
 NON_FACT = re.compile(r"假设|预测|预计|估计|情景|目标价|下一期|未来|测算|推算|假定|若|如果|差额|增量|减少额|增加额|其他公司|其他企业|另一公司|可比公司|同行")
@@ -56,9 +57,22 @@ def _period_kind(text):
     return None
 
 
+def _source_period_heading(source):
+    # Public PDF page titles may omit the period. Only an explicit report
+    # heading at the start of the actual body can fill that omission.
+    pattern = r"20\d{2}\s*年?\s*(?:年度|半年度|半年|第[一二三四1234]季度|年报)"
+    title = source.get('title', '')
+    if re.search(pattern, title):
+        return title
+    for line in str(source.get('text', '')).splitlines()[:6]:
+        if len(line) <= 160 and re.search(pattern, line) and re.search(r'报告|年报|中报|季报', line):
+            return line
+    return title
+
+
 def _source_year(source):
     # The disclosure year is NOT the reporting period.
-    match = re.search(r"(20\d{2})\s*年?\s*(?:年度|半年度|半年|第[一二三四1234]季度|年报)", source.get("title", ""))
+    match = re.search(r"(20\d{2})\s*年?\s*(?:年度|半年度|半年|第[一二三四1234]季度|年报)", _source_period_heading(source))
     return int(match.group(1)) if match else None
 
 
@@ -67,21 +81,33 @@ def source_amounts(source):
     sid = source.get("id", "")
     unit = None
     period = _source_year(source)
-    period_kind = _period_kind(source.get("title", ""))
+    period_kind = _period_kind(_source_period_heading(source))
     table_years = []
     comparative = False
+    comparative_period_kind=period_kind
     pending = []
     result = []
     for raw_line in str(source.get("text", "")).splitlines():
         line = raw_line.strip()
         if not line:
             continue
+        if re.search(r'(?:单位\s*[:：]|^[（(]).*(?:美元|港元|港币|欧元|日元|USD|HKD|EUR|JPY)', line, re.I):
+            unit = None
+            pending = []
+            table_years = []
+            comparative = False
+            comparative_period_kind=period_kind
+            continue
         header = TABLE_UNIT.search(line)
-        if header:
+        row_unit=ROW_UNIT.search(line)
+        first_number=NUMBERS.search(line)
+        inline_row_unit=bool(row_unit and first_number and row_unit.end()<=first_number.start())
+        if header and not inline_row_unit:
             unit = header.group(1)
             pending = []
             table_years = []
             comparative = False
+            comparative_period_kind=period_kind
             continue
         if re.search(r"单位\s*[:：]", line):
             # A later share/ton/USD table cannot inherit an earlier RMB unit.
@@ -89,6 +115,7 @@ def source_amounts(source):
             pending = []
             table_years = []
             comparative = False
+            comparative_period_kind=period_kind
             continue
         found = list(NUMBERS.finditer(line))
         explicit_years = YEARS.findall(line)
@@ -98,6 +125,11 @@ def source_amounts(source):
             pending = []
             continue
         if not found:
+            # This header contains an actual prior-period column even when a
+            # third column says "同比增减". It is not a revenue/cost table.
+            if re.search(r'(?:本报告期(?:末)?|本期|期末)\s+(?:上年同期|上年度末|上期|期初)',line):
+                comparative=True
+                comparative_period_kind='annual' if '上年度末' in line else period_kind
             if re.search(r"上期|上年|期初", line) and not re.search(r"同比|增减|增长|比上", line):
                 comparative = True
             if SKIP_LABEL.search(line):
@@ -108,6 +140,12 @@ def source_amounts(source):
         prefix = line[:found[0].start()].strip()
         label = " ".join(pending + [prefix]).strip()
         pending = []
+        row_unit=ROW_UNIT.search(label)
+        amount_unit=row_unit.group(1) if row_unit else unit
+        # Row-local parentheses apply only to this labelled row. They must not
+        # become a table unit for a later share, percentage or currency row.
+        if row_unit: label=ROW_UNIT.sub('',label).strip()
+        if re.search(r'[（(][^）)]*(?:美元|港元|港币|欧元|日元|USD|HKD|EUR|JPY)[^）)]*[）)]',label,re.I): continue
         if not label or SKIP_LABEL.search(label) or re.search(r"页|/\s*$", prefix):
             continue
         inline = list(AMOUNT.finditer(line))
@@ -117,7 +155,7 @@ def source_amounts(source):
                 result.append(SourceAmount(sid, label, match.group(1), amount_unit,
                                            number(match.group(1)) * UNITS[amount_unit], period, index, period_kind))
             continue
-        if not unit:
+        if not amount_unit:
             continue
         # Prose with numbers is not a table row. Explicit inline currency was
         # handled above; mixed prose/percent/year rows are left to source review.
@@ -134,7 +172,8 @@ def source_amounts(source):
                 continue
             year = (table_years[index] if index < len(table_years) else
                     period if index == 0 else period - 1 if period and comparative else None)
-            result.append(SourceAmount(sid, label, raw, unit, number(raw) * UNITS[unit], year, index, period_kind))
+            result.append(SourceAmount(sid, label, raw, amount_unit, number(raw) * UNITS[amount_unit], year, index,
+                                       period_kind if index==0 else comparative_period_kind))
     return result
 
 
@@ -241,4 +280,4 @@ def assert_memo_amounts(candidate, run):
         details = [f"{f['field']} 的 {f['claim']} 与引用 {f['source_id']} 的“{f['source_label']} {f['source_amount']}”不符，"
                    f"换算应约为 {f['expected']}（差 {f['factor']} 倍）" for f in findings[:10]]
         raise ValueError("金额单位换算校验未通过：" + "；".join(details) +
-                         "。请逐项按原文单位用元÷100000000、万元÷10000换算亿元，同步修改正文及问题答案，不得删除引用绕过校验；预测与派生计算请明确标注假设和公式。")
+                         "。请逐项按原文单位用元÷100000000、千元÷100000、万元÷10000、百万元÷100换算亿元，同步修改正文及问题答案，不得删除引用绕过校验；预测与派生计算请明确标注假设和公式。")
