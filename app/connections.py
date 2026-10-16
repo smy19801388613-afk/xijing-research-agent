@@ -21,7 +21,7 @@ PRESETS=[
 DATA_SOURCES=[
     {"id":"tushare","name":"Tushare Pro","description":"用户 Token；年度财务与证券目录","requires_key":True},
     {"id":"eastmoney","name":"东方财富公开财务","description":"无需密钥；与 AKShare 同源的公开财报接口，可能限流","requires_key":False},
-    {"id":"documents","name":"仅使用披露文件","description":"选取已上传的年报，保留单一来源标记","requires_key":False},
+    {"id":"documents","name":"指定研究材料","description":"使用已上传的 PDF 或 JSON/CSV，保留单一来源标记","requires_key":False},
 ]
 
 def protect(secret,decrypt=False):

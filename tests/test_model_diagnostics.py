@@ -49,7 +49,7 @@ def test_competition_audit_preserves_turn_ledger_but_redacts_nested_credentials(
             'invalid': {'reported_tokens': 'private', 'estimated_tokens': True,
                         'reserved_tokens': -1, 'used_tokens': {'api_key': 'private'},
                         'remaining_tokens': 1.5, 'execution_token_usage': 'private'}})
-    with sqlite3.connect(tmp_path / 'competition-audit.sqlite3') as connection:
+    with sqlite3.connect(tmp_path / 'execution-audit.sqlite3') as connection:
         saved = json.loads(connection.execute('SELECT payload FROM audit').fetchone()[0])
     assert saved['budget_usage'] == ledger
     assert {key: saved['execution_token_usage'][key] for key in ledger} == ledger

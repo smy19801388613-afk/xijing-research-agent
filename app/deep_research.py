@@ -509,6 +509,7 @@ def attempt_owner(run_id, chat, tool):
             'task_turn_id':current.get('task_turn_id') or turn_id,'step_id':step.get('id')}
 
 
+@competition.traced("deep_research", "run_id")
 def build(run_id, question, chat=None, progress=None):
     started = time.monotonic()
     deadline=execution_budget.deadline()
@@ -572,7 +573,7 @@ def build(run_id, question, chat=None, progress=None):
         pages=documents.ensure_index(existing)
         store.update_run(run_id,lambda r:documents.refresh_material_availability(r,existing,pages))
     local_only=competition.POLICY["enabled"] and not competition.POLICY["retrieval_origins"]
-    if local_only: limitations.append("比赛模式只用指定材料，未执行外部资料检索")
+    if local_only: limitations.append("受控运行只用指定材料，未执行外部资料检索")
     if not full_annual and not local_only:
         try:
             enforce_retrieval(chat,'fetch_annual_report',{'ticker':ticker,'year':req['year']})
@@ -608,7 +609,7 @@ def build(run_id, question, chat=None, progress=None):
                            lambda:documents.search_attached(chat, statement_queries))
     def gather(qs, read_limit):
         if local_only:
-            return {"results":[],"limitations":["比赛模式资料网络未许可"]}
+            return {"results":[],"limitations":["受控运行资料网络未许可"]}
         if chat.get('id'):
             from .turn_constraints import enforce
             try:

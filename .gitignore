@@ -19,3 +19,5 @@ docs/*.pdf
 var-competition/
 
 .venv-validation/
+
+var-controlled/

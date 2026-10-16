@@ -68,7 +68,7 @@ user_constraints是本轮实际约束，优先于旧对话；available_tools只�
 plan_research_questions: {questions:[{question:具体问题,completion_criteria:所需证据}]}。建立细分问题，不覆盖旧问题；把产品存在、收费合同、分项收入、回款拆开。
 update_research_question: {question_id:已存在问题ID,answer:答案,status:pending|partial|supported|conflict|unverifiable,bindings:[{source_id:实际来源ID,quote:原文连续摘录,relation:support|counter,reason:与问题的具体关系}],counter_evidence:反方说明,gaps:[缺口],next_action:下一步}。保存问题级证据，摘录必须匹配已读来源；不能将摘要数量当完成度。
 search_company: {query:公司名称或代码}，目录中模糊匹配。
-start_research: {ticker:带SZ/SH/BJ后缀代码,year:年度,question:研究问题,document_id:可选}。按本轮数据源和今天截止，建立财务底稿；后续可检索或修订。
+start_research: {ticker:带SZ/SH/BJ后缀代码,year:年度,question:研究问题,document_id:可选,material_ids:[可选结构化材料ID]}。按本轮数据源和今天截止建立财务底稿；用户要求使用表格材料时从 available_structured_materials 选择对应公司年度的指定材料，先经预检；后续可检索或修订。
 fetch_annual_report: {ticker:可选带后缀代码,year:可选年度}。有当前研究时自动使用当前公司年度和截止日；从巨潮查找下载年报全文，校验身份后接入当前对话，不依赖 Tushare。
 attach_document: {document_id:资料库已有文件ID}。接入当前对话，公司与年度不匹配会拒绝。
 search_documents: {queries:[最多6个2到40字关键词],document_id:可选}。检索已接入的 PDF 全文，返回带页码原文；可继续读取命中页及相邻页。
@@ -288,7 +288,7 @@ def tool(chat,name,args,model_input_run=None):
     enforce(chat,name,args)
     enforce_valuation_scope(chat,name,args)
     if competition.POLICY["enabled"] and not competition.POLICY["retrieval_origins"] and name in ("web_search","read_webpage","read_web_page","read_public_pdf","fetch_annual_report"):
-        raise competition.PolicyError("比赛模式只用指定材料，请读取现有资料或说明缺口")
+        raise competition.PolicyError("受控运行只用指定材料，请读取现有资料或说明缺口")
     if name=="search_company": return securities.search(str(args.get("query",""))[:80])
     if name=="attach_document": return documents.attach(chat["id"],args.get("document_id"),allow_running=True)
     if name=="fetch_annual_report":
@@ -329,12 +329,17 @@ def tool(chat,name,args,model_input_run=None):
         req=RunRequest(ticker=args.get("ticker",""),year=args.get("year",date.today().year-1),as_of=date.today(),
                        question=args.get("question","核对收入、归母净利润及经营现金流，提出研究追问。"),
                        mode="live",use_model=False,data_source=chat["data_source"],model_profile=chat["profile_id"],
-                       document_id=args.get("document_id"))
+                       document_id=args.get("document_id"),material_ids=args.get("material_ids",[]))
         if req.document_id: store.get_document(req.document_id)
         if competition.POLICY["enabled"]:
             req.data_source="documents"
-            req.material_ids=[m["id"] for m in competition.materials() if m["ticker"]==req.ticker and m["year"]==req.year]
-        run=store.create_run(req.model_dump(mode="json"))
+            if not req.material_ids:
+                req.material_ids=[m["id"] for m in competition.materials() if m["ticker"]==req.ticker and m["year"]==req.year]
+        payload=req.model_dump(mode="json")
+        checked=competition.preflight(payload)
+        if not checked['ready']: raise ValueError('；'.join(checked['errors']))
+        run=store.create_run(payload)
+        run=store.update_run(run['id'],lambda r:r.update(material_preflight=checked))
         def bind_run(c):
             c['run_id']=run['id']
             context=c.get('turn_contexts',{}).get(chat.get('turn_id'))
@@ -716,6 +721,8 @@ def execute(cid,expected_turn_id=None):
                     "internet":"web_search真实联网与read_webpage正文阅读，搜索摘要和全文分别标记，来源跨轮保留",
                     "memo":"build_investment_memo多轮检索、公司分析、反方审阅并保存报告；公司研究页查看，右上导出支持HTML/Markdown/证据包"},
                 "attached_documents":[documents.public_document(d) for d in documents.attached_documents(chat)],
+                "available_structured_materials":[m for m in competition.materials()
+                    if not decision_run or (m['ticker']==decision_run['request']['ticker'] and m['year']==decision_run['request']['year'])][-30:],
                 "available_documents":[{k:d.get(k) for k in ("id","title","ticker","year","page_count","announced_date")} for d in store.list_documents() if not chat.get("run_id") or d["ticker"]==store.get_run(chat["run_id"])["request"]["ticker"]][-50:]}),
                 3400,profile_id=chat["profile_id"])
             store.update_conversation(cid,lambda c:c["model_calls"].append(meta|{"turn_id":turn_id}))

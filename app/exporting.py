@@ -58,7 +58,14 @@ def valuation_state_message(run):
     from .report_state import report_valuation_status
     return report_valuation_status(run).get('message','')
 
-def evidence_bundle(run, get_document, snapshot_dir):
+def evidence_bundle(run, get_document, snapshot_dir, legacy=False):
+    from . import execution_audit
+    with execution_audit.scope(run_id=run['id']):
+        execution_audit.audit('evidence_export', report_revision=run.get('report_revision', 1))
+        return _evidence_bundle(run, get_document, snapshot_dir, legacy)
+
+
+def _evidence_bundle(run, get_document, snapshot_dir, legacy=False):
     """Portable report plus complete audit data. Never fetch external resources."""
     import hashlib
     import io
@@ -110,6 +117,50 @@ def evidence_bundle(run, get_document, snapshot_dir):
         'note':'解压后打开 report.html 阅读当前报告。已附 PDF 使用相对路径并保留页码；浏览器是否定位页码取决于 PDF 阅读器。外部链接需联网；未自动下载外链。run.json 保留原始记录与原 URL。',
         'documents':manifest_docs,'references':references,'unavailable_document_ids':unavailable,
         'files':[{'path':path,'bytes':len(content),'sha256':hashlib.sha256(content).hexdigest()} for path,content in files.items()]}
+    from . import execution_audit, materials, store
+    from .config import ROOT, VERSION
+    import importlib.metadata
+    import subprocess
+    for identity in run.get('request', {}).get('material_ids', []):
+        meta, _ = materials.read_material(identity)
+        files['materials/' + identity + Path(meta['path']).suffix] = competition.read_bytes(meta['path'])
+        files['materials/' + identity + '.meta.json'] = json.dumps(
+            {k: v for k, v in meta.items() if k != 'path'}, ensure_ascii=False, indent=2).encode('utf-8')
+    events = execution_audit.events_for_run(run)
+    files['execution/audit.json'] = json.dumps(events, ensure_ascii=False, indent=2).encode('utf-8')
+    files['execution/material-selection.json'] = json.dumps(
+        run.get('material_preflight') or {}, ensure_ascii=False, indent=2).encode('utf-8')
+    try:
+        commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True,
+            stderr=subprocess.DEVNULL, timeout=5).strip()
+    except (OSError, subprocess.SubprocessError):
+        commit = 'unknown'
+    versions = {}
+    for name in ('fastapi', 'httpx', 'pydantic', 'pdfplumber', 'pypdfium2'):
+        try: versions[name] = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError: versions[name] = 'missing'
+    source_files = [*sorted((ROOT / 'app').glob('*.py')), *sorted((ROOT / 'web' / 'src').glob('*'))]
+    source_hashes = {p.relative_to(ROOT).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+                     for p in source_files if p.is_file()}
+    environment = {'app_version': VERSION, 'commit': commit, 'source_sha256': source_hashes,
+        'dependencies': versions, 'policy': competition.POLICY, 'audit_scope': 'run',
+        'model_request_content': 'fingerprint_only',
+        'limitations': ['仅包含当前研究关联记录，历史未记录的步骤不会补造',
+                       '模型输入可能包含跨轮信息，包内仅提供输入指纹；不支持从本包完整回放模型请求',
+                       '真实模型重跑不保证逐字一致；完整源码需另行提供',
+                       '应用层访问限制不等于操作系统隔离']}
+    files['execution/environment.json'] = json.dumps(environment, ensure_ascii=False, indent=2).encode('utf-8')
+    for relative in ('requirements-lock.txt', 'web/package-lock.json'):
+        files['execution/reproducibility/' + relative] = (ROOT / relative).read_bytes()
+    if legacy:
+        # Existing CLI consumers can keep their paths; content has the same run scope.
+        for name in ('audit.json', 'material-selection.json', 'environment.json'):
+            files['competition/' + name] = files['execution/' + name]
+    manifest['schema_version'] = 2
+    manifest['audit_files'] += ['execution/audit.json', 'execution/material-selection.json', 'execution/environment.json']
+    manifest['execution_audit'] = {'scope': 'run', 'events': len(events), 'model_requests': 'fingerprint_only'}
+    manifest['files'] = [{'path': path, 'bytes': len(content), 'sha256': hashlib.sha256(content).hexdigest()}
+                         for path, content in files.items()]
     files['manifest.json']=json.dumps(manifest,ensure_ascii=False,indent=2).encode('utf-8')
     stream=io.BytesIO()
     with zipfile.ZipFile(stream,'w',zipfile.ZIP_DEFLATED) as archive:

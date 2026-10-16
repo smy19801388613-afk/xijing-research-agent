@@ -180,7 +180,7 @@ def execute(run_id):
     try:
         step(run,"检查研究边界",5,"锁定证券、年度和披露截止日")
         doc=None; pages=[]
-        doc_id=req.get("document_id") or (SAMPLE_ID if not competition.POLICY["enabled"] and req["ticker"]=="000333.SZ" and req["year"]==2025 else None)
+        doc_id=req.get("document_id") or (SAMPLE_ID if not competition.POLICY["enabled"] and not req.get("material_ids") and req["ticker"]=="000333.SZ" and req["year"]==2025 else None)
         if doc_id:
             doc=store.get_document(doc_id)
             step(run,"读取披露文件",12,doc["title"])
@@ -207,11 +207,13 @@ def execute(run_id):
         elif competition.POLICY["enabled"] or req.get("data_source")=="documents":
             if req["ticker"]=="000333.SZ": run["company"]="美的集团"
             else:
-                from .securities import search
-                matches=[r for r in search(req["ticker"])["items"] if r["ts_code"]==req["ticker"]]
+                from .securities import fallback
+                catalog_path=store.DATA/"securities.json"
+                catalog=competition.read_json(catalog_path) if catalog_path.exists() else fallback("指定材料研究不联网刷新证券目录")
+                matches=[r for r in catalog["items"] if r["ts_code"]==req["ticker"]]
                 if matches: run["company"]=matches[0]["name"]
-            step(run,"使用披露文件",55,"仅使用已绑定 PDF，不请求财务接口")
-            gap(run,"single_source","仅使用披露文件，尚无独立来源交叉核对")
+            step(run,"使用指定材料",55,"使用已绑定 PDF 和所选 JSON/CSV，不请求财务接口")
+            gap(run,"single_source","仅使用指定材料，尚无独立来源交叉核对")
         elif req.get("data_source")=="eastmoney":
             from .data_sources import Eastmoney
             step(run,"连接公开财务",22,"识别公司报表类型，读取年度公开财务")

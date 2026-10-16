@@ -108,9 +108,13 @@ def test_standalone_cancelled_worker_cannot_resurrect_run(workspace):
 
 def test_cancel_during_new_research_can_resume_in_the_attached_context(workspace,monkeypatch):
     chat=new_turn()
+    material=competition.register_material(json.dumps([{'metric':'revenue','year':2025,'value':100,
+        'unit':'元','currency':'CNY','scope':'consolidated','period_type':'annual',
+        'announced_date':'2026-03-31'}]).encode(),'cancel-test.json','601899.SH',2025)
     monkeypatch.setattr(agent.research,'execute',lambda rid:store.cancel_conversation(chat['id'],chat['turn_id']))
     with store.execution_scope('conversation',chat['id'],chat['turn_id']):
-        result=agent.tool(chat,'start_research',{'ticker':'601899.SH','year':2025,'question':'研究经营'})
+        result=agent.tool(chat,'start_research',{'ticker':'601899.SH','year':2025,'question':'研究经营',
+                                              'material_ids':[material['id']]})
     saved=store.get_conversation(chat['id'])
     assert saved['turn_contexts'][chat['turn_id']]['run_id']==result['run_id']
     assert saved['messages'][-1]['delivery']['can_resume']

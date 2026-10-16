@@ -11,13 +11,13 @@ from datetime import date
 from pathlib import Path
 from contextlib import asynccontextmanager,suppress
 from urllib.parse import urlparse
-from fastapi import FastAPI,HTTPException,UploadFile,File,Form,Request,Body
+from fastapi import FastAPI,HTTPException,UploadFile,File,Form,Request,Body,Query
 from fastapi.responses import FileResponse,Response,StreamingResponse,JSONResponse
 from fastapi.staticfiles import StaticFiles
 import pdfplumber
 import pypdfium2
 from .config import ROOT,DATA,VERSION,settings
-from . import store,documents,connections,securities,valuation,disclosures,competition,runtime
+from . import store,documents,connections,securities,valuation,disclosures,competition,runtime,materials
 from .schemas import RunRequest,ScenarioRequest,ReviewRequest,ProfileRequest,PreferencesRequest,ValuationRequest,ConversationRequest,TurnRequest,ReportRequest
 from .providers import ProviderError,model_json,list_models
 from .finance import scenario,audit_text
@@ -47,9 +47,13 @@ async def local_origin(request:Request,call_next):
         origin=request.headers.get("origin")
         if origin and urlparse(origin).hostname not in ("127.0.0.1","localhost"):
             return JSONResponse({"detail":"只接受本机工作台发起的操作"},status_code=403)
-    response = await call_next(request)
-    if request.method not in ("GET","HEAD","OPTIONS"):
-        competition.audit("api_action",method=request.method,path=request.url.path,status=response.status_code)
+    context={}
+    match=re.match(r"^/api/(runs|conversations)/([a-f0-9]{16})(?:/|$)", request.url.path)
+    if match: context['run_id' if match[1]=='runs' else 'conversation_id']=match[2]
+    with competition.scope(**context):
+        response = await call_next(request)
+        if request.method not in ("GET","HEAD","OPTIONS"):
+            competition.audit("api_action",method=request.method,path=request.url.path,status=response.status_code)
     if request.url.path in ('/', '/index.html', '/api/health', '/api/settings'):
         # A desktop launcher must fetch the current shell and running version.
         # Hashed JS/CSS assets can retain their normal browser caching behavior.
@@ -124,6 +128,14 @@ def trash(): return store.list_trash()
 @app.post("/api/trash/{kind}/{identity}/restore")
 def restore(kind:str,identity:str): return store.restore_item(kind,identity)
 
+def material_preflight(payload):
+    if payload['mode']=='live':
+        checked=materials.preflight(payload)
+        if not checked['ready']: raise ValueError('；'.join(checked['errors']))
+        return checked
+    for identity in payload.get('material_ids',[]): materials.read_material(identity)
+    return None
+
 @app.post("/api/runs",status_code=202)
 def create(request:RunRequest):
     if request.document_id: store.get_document(request.document_id)
@@ -133,11 +145,7 @@ def create(request:RunRequest):
     if competition.POLICY["enabled"] and payload["mode"]=="live": payload["data_source"]="documents"
     payload["model_profile"]=payload["model_profile"] or config["active_model"]
     if payload['use_model']: connections.resolve_model(payload["model_profile"])
-    for identity in payload["material_ids"]: competition.read_material(identity)
-    preflight=None
-    if competition.POLICY['enabled'] and payload['mode']=='live':
-        preflight=competition.preflight(payload)
-        if not preflight['ready']: raise ValueError('；'.join(preflight['errors']))
+    preflight=material_preflight(payload)
     run=store.create_run(payload)
     if preflight: run=store.update_run(run['id'],lambda r:r.update(material_preflight=preflight))
     return launch(run)
@@ -234,11 +242,20 @@ def get(run_id:str):
     from .questions import snapshot,report_sync
     return enrich(run) | {"report_valuation_status":report_valuation_status(run),"question_coverage":snapshot(run),"report_sync":report_sync(run)}
 
+@app.get("/api/runs/{run_id}/audit")
+def execution_events(run_id:str,limit:int=Query(default=200,ge=1,le=200)):
+    from .execution_audit import events_for_run
+    records=events_for_run(store.get_run(run_id))
+    return {'events':records[-limit:],'total':len(records)}
+
 @app.post("/api/runs/{run_id}/retry",status_code=202)
 def retry(run_id:str):
     old=store.get_run(run_id)
     if old["state"] in ("queued","running"): raise ValueError("请先等待或取消当前任务")
-    return launch(store.create_run(old["request"],parent=run_id))
+    preflight=material_preflight(old['request'])
+    run=store.create_run(old['request'],parent=run_id)
+    if preflight: run=store.update_run(run['id'],lambda r:r.update(material_preflight=preflight))
+    return launch(run)
 
 @app.post("/api/runs/{run_id}/cancel")
 def cancel(run_id:str):
@@ -394,19 +411,28 @@ def research_questions_update(run_id:str,request:dict):
     ensure_questions_editable(run_id)
     return update(run_id,request.get('answers',[]),'human')
 
+@app.get("/api/runtime-policy")
 @app.get("/api/competition")
 def competition_status(): return competition.status()
 
+@app.post("/api/materials/preflight")
 @app.post("/api/competition/preflight")
 def competition_preflight(request:RunRequest):
-    return competition.preflight(request.model_dump(mode='json'))
+    return materials.preflight(request.model_dump(mode='json'))
 
+@app.get("/api/materials")
 @app.get("/api/competition/materials")
-def competition_materials(): return competition.materials()
+def competition_materials(): return materials.materials()
 
+@app.get("/api/materials/{identity}")
+def material_contents(identity:str):
+    meta,rows=materials.read_material(identity)
+    return {'metadata':{k:v for k,v in meta.items() if k!='path'},'rows':rows}
+
+@app.post("/api/materials")
 @app.post("/api/competition/materials")
 def competition_import(file:UploadFile=File(...),ticker:str=Form(...),year:int=Form(...),announced_date:str|None=Form(None)):
-    return competition.register_material(file.file.read(10*1024*1024+1),file.filename or "material.json",ticker,year,announced_date)
+    return materials.register_material(file.file.read(10*1024*1024+1),file.filename or "material.json",ticker,year,announced_date or None)
 
 @app.get("/api/runs/{run_id}/submission")
 def competition_export(run_id:str):

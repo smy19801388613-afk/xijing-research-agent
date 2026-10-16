@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react';
 import {Plus,PlugZap,Check,Save,KeyRound,Database,LoaderCircle} from 'lucide-react';
 import {api,post} from './api';
+import RuntimePolicy from './RuntimePolicy';
 import ExecutionBudget,{defaultBudget} from './ExecutionBudget';
 export default function ConnectionSettings({config,onChange}:any){
   const [draft,setDraft]=useState<any>(null),[token,setToken]=useState(''),[source,setSource]=useState(config.data_source||'tushare'),[busy,setBusy]=useState(''),[message,setMessage]=useState(''),[error,setError]=useState(''),[models,setModels]=useState<string[]>([]);
@@ -38,5 +39,6 @@ export default function ConnectionSettings({config,onChange}:any){
       <div className="button-row"><button className="primary" disabled={!!busy} onClick={()=>action('data',async()=>{onChange(await post('/connections/preferences',{data_source:source,tushare_token:token}));setToken('');setMessage('数据连接已保存，下次新研究使用该来源')})}><Save size={15}/>保存数据连接</button><button className="text-link" disabled={!!busy||!config.tushare_configured} onClick={()=>action('clear-token',async()=>{onChange(await post('/connections/preferences',{clear_tushare:true}));setToken('');setMessage('已清除 Tushare Token')})}>清除 Token</button></div>
       <p className="small-muted form-help">公司目录使用 Tushare 每日缓存；没有 Token 时可用本机历史目录或直接填写完整证券代码。每份研究会记录实际使用的数据源。</p>
     </section>
+    <RuntimePolicy/>
   </div>
 }
