@@ -168,7 +168,7 @@ def test_new_report_requires_decision_legacy_validation_does_not_migrate(run):
     with pytest.raises(ValueError, match='investment_recommendation'):
         deep.validate_memo(memo(), run, require_recommendation=True)
     result = deep.validate_memo(memo(suggestion()), run, require_recommendation=True)
-    assert {'market-synthetic', 'valuation-synthetic-ddm'}.issubset({s['id'] for s in result['sources']})
+    assert {'market-synthetic', 'valuation-synthetic-ddm'}.issubset({s['id'] for s in result['recommendation_sources']})
 
 
 def test_local_other_edit_preserves_frozen_advice_without_refetching_price(run):
@@ -178,7 +178,7 @@ def test_local_other_edit_preserves_frozen_advice_without_refetching_price(run):
     changed = deepcopy(previous); changed['title'] = '只改标题'
     saved = deep.validate_memo(changed, run, require_recommendation=True, preserve_recommendation=True)
     assert saved['investment_recommendation'] == previous['investment_recommendation']
-    assert next(s for s in saved['sources'] if s['id'] == 'market-synthetic')['value'] == '10'
+    assert next(s for s in saved['recommendation_sources'] if s['id'] == 'market-synthetic')['value'] == '10'
 
 
 def test_recommendation_edit_scope_and_evidence_retention(run):

@@ -304,6 +304,8 @@ async def events(run_id:str):
 def calculate_scenario(run_id:str,request:ScenarioRequest):
     run=store.get_run(run_id)
     if run["state"] in ("queued","running"): raise ValueError("请等待财务核对完成后调整情景")
+    from .financial_basis import assert_usable
+    assert_usable(run,'n_income_attr_p',run['request']['year'])
     fact=next((f for f in run["facts"] if f["metric"]=="n_income_attr_p" and f["year"]==run["request"]["year"]),None)
     if not fact or fact["status"]=="conflict": raise ValueError("缺少无冲突的归母净利润，暂不能计算 PE 情景")
     output=scenario(fact["value"],request.growth_pct,request.pe,request.shares_100m)

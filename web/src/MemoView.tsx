@@ -8,7 +8,10 @@ import InvestmentRecommendation from './InvestmentRecommendation';
 function EvidenceLinks({ids,memo}:any){
   const sources=(ids||[]).map((id:string)=>memo.sources?.find((s:any)=>s.id===id)).filter(Boolean);
   if(!sources.length)return null;
-  return <div className="memo-citations">{sources.map((s:any)=>s.url?<a href={s.url} key={s.id} target="_blank" rel="noreferrer">{s.title}<ExternalLink size={11}/></a>:<span key={s.id}>{s.title}{s.kind==='valuation'?' · 假设情景':s.verification?' · '+s.verification.label:s.status==='api_only'?' · 接口单源':''}</span>)}</div>
+  return <div className="memo-citations">{sources.map((s:any)=>{
+    const page=String(s.title||'').match(/\s*·\s*(第\s*\d+\s*页)$/);
+    return s.url?<a href={s.url} title={s.title} key={s.id} target="_blank" rel="noreferrer"><span>{page?s.title.slice(0,page.index):s.title}</span>{page&&<small>{page[1]}</small>}<ExternalLink size={12}/></a>:<span key={s.id} title={s.title}>{s.title}{s.kind==='valuation'?' · 假设情景':s.verification?' · '+s.verification.label:s.status==='api_only'?' · 接口单源':''}</span>
+  })}</div>
 }
 function ReviewRecord({review}:any){
   const labels:Record<string,string>={open:'未解决',resolved:'已复核解决',needs_review:'待复核'};
@@ -28,19 +31,22 @@ export default function MemoView({run,onDeepResearch,onDiscuss,onSync,onHistory}
   if(!memo)return <p>研究报告尚未生成。</p>;
   const deep=memo.schema_version===2;
   const valuationState=run.report_valuation_status;
-  return <div className="investment-memo">
-    <header className="memo-heading"><div><span className="memo-kicker">{deep?'投资研究备忘录':'财务研究简报'} · 第 {run.report_revision||1} 版</span><h2>{memo.title}</h2></div>{onDeepResearch&&<button className="secondary" onClick={onDeepResearch}>深入研究并更新</button>}</header>
+  const companyName=typeof run.company==='string'?run.company:(run.company?.name||run.request?.company_name||'');
+  return <div className="investment-memo report-document">
+    <div className="memo-masthead"><span>析鲸AI <b>投资研究</b></span><span>第 {run.report_revision||1} 版</span></div>
+    <header className="memo-heading"><div><span className="memo-kicker">{deep?'投资研究备忘录':'财务研究简报'}</span><h2>{memo.title}</h2><div className="memo-dateline"><span>{[companyName,run.request?.ticker].filter(Boolean).join(' · ')}</span>{run.request?.as_of&&<span>研究截至 {run.request.as_of}</span>}</div></div>{onDeepResearch&&<button className="secondary" onClick={onDeepResearch}>深入研究并更新</button>}</header>
     <ReportSyncNotice run={run} onSync={onSync} onHistory={onHistory}/>
+    {!!run.financial_basis_issues?.length&&<div className="memo-basis-conflict" role="alert"><strong>财务口径待核对</strong><ul>{run.financial_basis_issues.map((issue:any,i:number)=><li key={i}>{issue.message}</li>)}</ul><p>依赖这些数据的估值计算已暂停，已保存报告仍保留原有判断。</p></div>}
     <InvestmentRecommendation memo={memo} run={run} onDiscuss={onDiscuss}/>
-    {memo.stance&&<div className="memo-stance"><strong>研究立场</strong><p>{memo.stance}</p></div>}
-    <ResearchText text={memo.summary}/>
-    {valuationState&&['changed','unlinked'].includes(valuationState.state)&&<div className="memo-valuation-status" role="note"><strong>估值与报告的关联</strong><p>{valuationState.message}</p></div>}
-    {deep&&<nav className="memo-nav" aria-label="报告目录"><strong>目录</strong>{memo.sections.map((s:any)=><a key={s.key} href={'#'+anchor+'-memo-'+s.key}>{s.title}</a>)}</nav>}
-    <div className="memo-theses">{memo.theses?.map((t:any,i:number)=><article key={i} className="memo-thesis"><h3>{t.title}</h3><ResearchText text={t.body}/><EvidenceLinks ids={t.evidence_ids} memo={memo}/><div className="memo-challenge"><p><strong>反证与替代解释</strong>{t.counter_evidence}</p><p><strong>何时改变判断</strong>{t.invalidate_if}</p></div></article>)}</div>
-    {deep&&memo.sections.map((s:any)=><section id={anchor+'-memo-'+s.key} tabIndex={-1} className="memo-section" key={s.key}><h3>{s.title}{s.status==='gap'&&<span className="badge">证据待补充</span>}</h3><ResearchText text={s.body}/><EvidenceLinks ids={s.evidence_ids} memo={memo}/>{onDiscuss&&<button className="text-link memo-followup" onClick={()=>onDiscuss(`请围绕报告“${s.title}”继续查证：核对关键证据、反证及仍缺失的资料，先说明发现与不确定性。`)}>继续查证此节</button>}</section>)}
+    <section className="memo-overview"><h3>研究摘要</h3>{memo.stance&&<div className="memo-stance"><strong>研究立场</strong><p>{memo.stance}</p></div>}<ResearchText text={memo.summary}/></section>
+    {valuationState&&['changed','unlinked','blocked'].includes(valuationState.state)&&<div className="memo-valuation-status" role="note"><strong>估值与报告的关联</strong><p>{valuationState.message}</p></div>}
+    {deep&&<nav className="memo-nav" aria-label="报告目录"><strong>阅读导航</strong>{memo.sections?.map((s:any,i:number)=><a key={s.key} href={'#'+anchor+'-memo-'+s.key}><span>{String(i+1).padStart(2,'0')}</span>{s.title}</a>)}</nav>}
+    {!!memo.theses?.length&&<section className="memo-theses"><h3 className="memo-group-title">核心投资论点</h3>{memo.theses.map((t:any,i:number)=><article key={i} className="memo-thesis"><div className="memo-thesis-heading"><span aria-hidden="true">{String(i+1).padStart(2,'0')}</span><h3>{t.title}</h3></div><ResearchText text={t.body}/><EvidenceLinks ids={t.evidence_ids} memo={memo}/><div className="memo-challenge"><div><strong>反证与替代解释</strong><ResearchText text={t.counter_evidence}/></div><div><strong>何时改变判断</strong><ResearchText text={t.invalidate_if}/></div></div></article>)}</section>}
+    {deep&&memo.sections?.map((s:any,i:number)=><section id={anchor+'-memo-'+s.key} tabIndex={-1} className="memo-section" key={s.key}><div className="memo-section-heading"><span className="memo-section-number" aria-hidden="true">{String(i+1).padStart(2,'0')}</span><h3>{s.title}{s.status==='gap'&&<span className="badge">证据待补充</span>}</h3></div><ResearchText text={s.body}/><EvidenceLinks ids={s.evidence_ids} memo={memo}/>{onDiscuss&&<button className="text-link memo-followup" onClick={()=>onDiscuss(`请围绕报告“${s.title}”继续查证：核对关键证据、反证及仍缺失的资料，先说明发现与不确定性。`)}>继续查证此节</button>}</section>)}
     <ResearchTracking run={run} onDiscuss={onDiscuss}/>
     {!!memo.questions?.length&&<section className="memo-section"><h3>核实清单</h3><ul>{memo.questions.map((q:string,i:number)=><li key={i}>{q}{onDiscuss&&<button className="text-link memo-followup" onClick={()=>onDiscuss(`请继续查证：${q}。请给出来源和未能确认的部分。`)}>继续查证</button>}</li>)}</ul></section>}
     {!!memo.sources?.length&&<section className="memo-source-list"><button className="memo-source-toggle" aria-expanded={sourcesOpen} onClick={()=>setSourcesOpen(!sourcesOpen)}>{sourcesOpen?<ChevronDown size={16}/>:<ChevronRight size={16}/>}查阅来源 · {memo.sources.length} 项</button>{sourcesOpen&&memo.sources.map((s:any)=><article key={s.id}><strong>{s.url?<a href={s.url} target="_blank" rel="noreferrer">{s.title}</a>:s.title}</strong><p>{s.kind==='pdf'?'PDF 原文':s.read_status==='body_read'?'已读取网页正文':s.read_status==='search_snippet'?'搜索摘要，未读取正文':s.kind==='valuation'?'用户假设情景':s.verification?s.verification.label:s.status==='api_only'?'接口单源，未双源核验':'计算或财务来源'}{s.published_at?' · 披露日期 '+s.published_at:' · 披露日期待核实'}</p>{s.text&&<details><summary>查阅摘录</summary><p className="source-excerpt">{s.text}</p></details>}</article>)}</section>}
     <details className="memo-limitations"><summary>研究边界与审阅记录</summary><ul>{memo.limitations?.map((v:string,i:number)=><li key={i}>{v}</li>)}</ul>{memo.coverage&&<p>本次检索 {memo.coverage.queries} 条搜索词；研究资料累计包含 {memo.coverage.web_sources} 个网页来源（{memo.coverage.web_bodies} 个已读正文）、{memo.coverage.pdf_pages} 页 PDF。</p>}{memo.review&&<ReviewRecord review={memo.review}/>}</details>
+    <footer className="memo-footer"><span>析鲸AI · 投资研究备忘录</span><span>第 {run.report_revision||1} 版{run.request?.as_of?' / '+run.request.as_of:''}</span></footer>
   </div>
 }

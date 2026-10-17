@@ -38,9 +38,11 @@ export default function InvestmentRecommendation({memo,run,onDiscuss}:any){
   const conditional=rec.status==='conditional'&&!insufficient;
   const title=insufficient?'暂不决策':rec.action==='watch'?'观察，暂不行动':conditional?`条件满足后${knownAction}`:knownAction;
   const quote=rec.market_snapshot;
-  const quoteSource=quote?.source_id&&(memo.sources?.some((s:any)=>s.id===quote.source_id)||(quote.text&&safeUrl(quote.source_url)));
+  const hasFrozenSources=Object.prototype.hasOwnProperty.call(memo,'recommendation_sources');
+  const frozenSources=hasFrozenSources?(Array.isArray(memo.recommendation_sources)?memo.recommendation_sources:[]):(memo.sources||[]);
+  const quoteSource=quote?.source_id&&(frozenSources.some((s:any)=>s.id===quote.source_id)||(!hasFrozenSources&&quote.text&&safeUrl(quote.source_url)));
   const hasQuote=quote?.status==='available'&&validDecimal(quote.price)&&Number(quote.price)>0&&quote.trade_date&&quoteSource;
-  const sources=(rec.evidence_ids||[]).map((id:string)=>memo.sources?.find((s:any)=>s.id===id)||{id,title:id,missing:true});
+  const sources=(rec.evidence_ids||[]).map((id:string)=>frozenSources.find((s:any)=>s.id===id)||{id,title:id,missing:true});
   const scenarios=(rec.valuation_scenario_ids||[]).map((id:string)=>(rec.valuation_basis||[]).find((v:any)=>v.scenario_id===id)||(memo.valuation_context?.scenarios||[]).find((v:any)=>v.id===id)||{scenario_id:id,missing:true});
   const comparisons=hasQuote&&quote.decision_eligible===true&&Array.isArray(rec.price_comparisons)?rec.price_comparisons.filter((p:any)=>{
     const basis=(rec.valuation_basis||[]).find((v:any)=>v.scenario_id===p.scenario_id);
@@ -48,13 +50,15 @@ export default function InvestmentRecommendation({memo,run,onDiscuss}:any){
   }):[];
   const marketChanged=run?.market_snapshot&&marketSignature(run.market_snapshot)!==marketSignature(quote);
   const cutoffChanged=run?.request?.as_of&&rec.as_of&&run.request.as_of!==rec.as_of;
+  const freshness=run?.report_sync?.recommendation_freshness;
+  const missingSnapshot=memo.recommendation_source_gaps||[];
   return <section className={`investment-recommendation ${insufficient?'recommendation-insufficient':''}`} aria-label="投资建议">
     <div className="recommendation-heading"><div><span className="recommendation-eyebrow">投资建议{bases[rec.basis]?' · '+bases[rec.basis]:''}</span><h3>{title}</h3></div><div className="recommendation-meta"><span>{recommendationText(rec.horizon||'期限待明确')}</span><span>置信度 · {confidence[rec.confidence]||'待评估'}</span>{rec.as_of&&<span>截至 {rec.as_of}</span>}</div></div>
-    <div className="recommendation-summary"><ResearchText text={recommendationText(rec.summary)}/></div>
-    {(marketChanged||cutoffChanged)&&<p className="recommendation-frozen-notice" role="note">{marketChanged?'当前行情资料已变化。':'研究截止日已变化。'}本建议仍采用原快照与原判断；需要重新核验并修订建议。局部文字修改不会更新这些依据。</p>}
+    {(marketChanged||cutoffChanged||freshness?.needs_update||missingSnapshot.length>0)&&<div className="recommendation-frozen-notice" role="note"><strong>本建议的依据需要重新核验</strong><p>本建议保留原快照与原判断，局部文字修改不会更新依据。</p>{freshness?.reasons?.length?<ul>{freshness.reasons.map((reason:string,i:number)=><li key={i}>{reason}</li>)}</ul>:<p>{missingSnapshot.length?'缺少当时冻结的来源版本：'+missingSnapshot.join('、'):marketChanged?'当前行情资料已变化。':cutoffChanged?'研究截止日已变化。':''}</p>}</div>}
     <div className="recommendation-positions"><div><h4>未持仓</h4><p>{recommendationText(rec.new_position||'行动待明确')}</p></div><div><h4>已有持仓</h4><p>{recommendationText(rec.existing_position||'行动待明确')}</p></div></div>
-    {hasQuote&&<div className="recommendation-market"><span>{quote.decision_eligible===false?'参考收盘价（适用性待核实）':'参考收盘价'} <strong>{displayAmount(quote.price)} {quote.currency||''}</strong></span><span>{quote.ticker?quote.ticker+' · ':''}交易日 {quote.trade_date}</span>{safeUrl(quote.source_url)&&<a href={safeUrl(quote.source_url)} target="_blank" rel="noreferrer">行情来源 <ExternalLink size={12}/></a>}</div>}
-    {comparisons.length>0&&<div className="recommendation-comparisons">{comparisons.map((p:any,i:number)=><p key={p.scenario_id||i}><strong>估值情景 {displayAmount(p.scenario_price)} {p.currency}</strong><span>相对所列参考价的假设空间 {displayPercent(p.upside_pct)}%</span></p>)}<p className="recommendation-qualifier">来自已保存的用户假设情景，不代表收益预测。</p></div>}
+    <div className="recommendation-pricing">{hasQuote&&<div className="recommendation-market"><span>{quote.decision_eligible===false?'参考收盘价（适用性待核实）':'参考收盘价'} <strong>{displayAmount(quote.price)} <small>{quote.currency||''}</small></strong></span><span>{quote.ticker?quote.ticker+' · ':''}交易日 {quote.trade_date}</span>{safeUrl(quote.source_url)&&<a href={safeUrl(quote.source_url)} target="_blank" rel="noreferrer">行情来源 <ExternalLink size={12}/></a>}</div>}
+    {comparisons.length>0&&<div className="recommendation-comparisons">{comparisons.map((p:any,i:number)=><div key={p.scenario_id||i}><span>估值情景</span><strong>{displayAmount(p.scenario_price)} <small>{p.currency}</small></strong><span>相对所列参考价的假设空间 {displayPercent(p.upside_pct)}%</span></div>)}<p className="recommendation-qualifier">来自已保存的用户假设情景，不代表收益预测。</p></div>}</div>
+    <div className="recommendation-summary"><h4>建议理由</h4><ResearchText text={recommendationText(rec.summary)}/></div>
     <div className="recommendation-conditions"><Points title="建仓或加仓条件" items={rec.buy_conditions}/><Points title="减仓或退出条件" items={rec.exit_conditions}/></div>
     <Points title={insufficient?'当前决策缺口':'仍需核实'} items={rec.blocking_gaps}/>
     <details className="recommendation-details"><summary><span>风险、调整条件与依据</span><ChevronDown size={16}/></summary>

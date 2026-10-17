@@ -284,20 +284,39 @@ def _period_label(year, quarter, period_type):
 
 def analyze(records):
     """No I/O: usable and blocked derived values retain complete input lineage."""
+    from .financial_basis import compatible_amounts, period_tolerance
     buckets = defaultdict(list); issues = []; quarters = []; cumulative = []; balances = []
     for r in records:
         typ = 'point' if r['kind'] == 'balance' else r['period_type']
         buckets[(_basis(r), r['year'], r['quarter'], typ)].append(r)
     nodes = {}
     for key, rows in buckets.items():
-        values = {r['value_base'] for r in rows}
-        reason = '同一期间及口径存在金额冲突' if len({Decimal(v) for v in values}) > 1 else '关联来源已失效或变化' if _status(rows) == 'source_changed' else None
+        values = {Decimal(r['value_base']) for r in rows}
+        different = len(values) > 1
+        # Reconcile annual imports with a separately recorded disclosure only.
+        # Other period conflicts retain their existing exact comparison rule.
+        rounded = (different and key[2:] == (4, 'cumulative')
+                   and any(r.get('imported_fact_id') for r in rows)
+                   and compatible_amounts([(Decimal(r['value_base']), period_tolerance(r)) for r in rows]))
+        basis_issue = next((r.get('basis_conflict') for r in rows if r.get('basis_conflict')), None)
+        reason = basis_issue or ('同一期间及口径存在金额冲突' if different and not rounded else '关联来源已失效或变化' if _status(rows) == 'source_changed' else None)
         basis, year, q, typ = key
         nid = 'fp-value-' + hashlib.sha256(repr(key).encode()).hexdigest()[:12]
         label = _period_label(year, q, typ)
-        node = _point(rows, nid, label, None if reason else Decimal(rows[0]['value_base']), '原始金额 × 单位倍率', period_type=typ, reason=reason)
+        selected = min(rows, key=lambda r: (period_tolerance(r), r['id'])) if rounded else rows[0]
+        formula = '原始金额 × 单位倍率'
+        precision = {}
+        if rounded:
+            formula += '；舍入差异内按原始精度较高的记录计算，不代表该来源更准确'
+            precision = {'precision_reconciliation': {'status': 'rounding_compatible',
+                'selected_record_id': selected['id'], 'selection_rule': 'higher_original_precision',
+                'note': '只认定在原始精度内兼容，不升级核验状态；各来源原值与单位完整保留。',
+                'inputs': [{'record_id': r['id'], 'value_base': r['value_base'],
+                            'tolerance_base': str(period_tolerance(r))} for r in rows]}}
+        node = _point(rows, nid, label, None if reason else Decimal(selected['value_base']), formula,
+                      period_type=typ, reason=reason, **precision)
         nodes[key] = node
-        if reason: issues.append({'code': 'conflict' if len(values)>1 else 'source_changed', 'message': reason, 'inputs':node['inputs']})
+        if reason: issues.append({'code': 'annual_basis_conflict' if basis_issue else 'conflict' if different and not rounded else 'source_changed', 'message': reason, 'inputs':node['inputs']})
         if typ == 'point': balances.append(node)
         if typ == 'cumulative': cumulative.append(node)
     groups = {(key[0], key[1]) for key in nodes if key[3] != 'point'}
@@ -370,10 +389,18 @@ def analyze(records):
 
 
 def validated_records(run, refs=None):
+    from .financial_basis import conflicts
+    blocked = {rid: issue['message'] for issue in conflicts(run) for rid in issue['record_ids']}
     refs = _catalog(run) if refs is None else refs
     records = []
+    facts = {f.get('id'): f for f in run.get('facts', [])}
     for stored in run.get('financial_period_records', []):
         r = dict(stored)
+        imported = facts.get(r.get('imported_fact_id'))
+        if imported and number(r.get('value_base')) == number(imported.get('value')):
+            r['comparison_precision'] = {'original_value': imported.get('original_value', imported.get('value')),
+                                         'original_unit': imported.get('original_unit', '元')}
+        if r['id'] in blocked: r['basis_conflict'] = blocked[r['id']]
         if r.get('source_type') == 'existing':
             src = refs.get(r['source_id'])
             digest = hashlib.sha256(src.get('text','').encode()).hexdigest() if src else None

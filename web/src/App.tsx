@@ -13,6 +13,7 @@ import ValuationLab from './ValuationLab';
 import MemoView from './MemoView';
 import FinancialPeriodsPanel from './FinancialPeriodsPanel';
 import {reportSyncPrompt} from './ReportSyncNotice';
+import {watchRunStatus} from './runStatus';
 import './agent.css';
 
 type Run=any;
@@ -61,7 +62,11 @@ export default function App(){
   useEffect(()=>{if(tab==='library'||showNew)Promise.all([api('/documents'),api('/materials')]).then(([d,m])=>{setDocs(d);setMaterials(m)}).catch(e=>setError(e.message))},[tab,showNew]);
   async function selectRun(id:string){setError('');try{const r=await api('/runs/'+id);setRun(r);setSelected('revenue-'+r.request.year);setSourceId('');setShowEvidence(false);setComparison(null);setCompareId('');setReview(null);localStorage.setItem('research-run',id)}catch(e:any){setError(e.message)}}
   useEffect(()=>{Promise.all([api('/settings'),api('/runs'),api('/documents'),api('/materials')]).then(([s,r,d,m])=>{setConfig(s);setRuns(r);setDocs(d);setMaterials(m);setForm((f:any)=>({...f,as_of:s.today}));const saved=localStorage.getItem('research-run');if(r.length)selectRun(r.find((x:any)=>x.id===saved)?.id||r[0].id)}).catch(e=>setError(e.message)).finally(()=>setLoading(false))},[]);
-  useEffect(()=>{if(!run||!busy)return;const events=new EventSource('/api/runs/'+run.id+'/events');events.onmessage=e=>{const r=JSON.parse(e.data);setRun(r);if(!['queued','running'].includes(r.state)){events.close();refreshRuns()}};events.onerror=()=>{events.close();api('/runs/'+run.id).then(setRun).catch(()=>setError('研究状态连接中断，请刷新页面查看已保存的进度'))};return()=>events.close()},[run?.id,busy]);
+  useEffect(()=>{if(!run||!busy)return;return watchRunStatus(run.id,{
+    read:(id,signal)=>api('/runs/'+id,{signal}),
+    onSnapshot:r=>{setRun(r);if(!['queued','running'].includes(r.state))refreshRuns().catch(()=>{})},
+    onConnectionError:message=>setError(previous=>message||(previous.startsWith('研究状态连接')||previous.startsWith('暂时无法获取研究状态')?'':previous)),
+  })},[run?.id,busy]);
   useEffect(()=>{if(!notice)return;const id=setTimeout(()=>setNotice(''),4500);return()=>clearTimeout(id)},[notice]);
   function chooseFact(id:string){setSelected(id);setSourceId('');setShowEvidence(true)}
   function discuss(text:string){setAutoSendPrompt(false);setChatPrompt(text);setTab('chat')}

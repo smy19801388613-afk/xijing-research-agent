@@ -169,12 +169,40 @@ def normalize_metrics(candidate, catalog, run=None, theses=None, allow_existing_
     return result
 
 
+def included_observation_ids(run):
+    """App-owned input receipt, not a claim that an observation was verified."""
+    context = (run.get('memo') or {}).get('tracking_observation_context') or {}
+    return context.get('included_ids', []) if context.get('schema_version') == 1 else []
+
+
+def freeze_observation_context(memo, run, model_context=None, limited=False):
+    """Only whole-report work can acknowledge observations actually supplied.
+
+    Local edits retain the previous receipt. Historical reports without one are
+    conservative: their observations remain pending until explicit full research.
+    """
+    previous = (run.get('memo') or {}).get('tracking_observation_context')
+    if limited:
+        if previous is not None:
+            memo['tracking_observation_context'] = deepcopy(previous)
+        return
+    existing = {o.get('id') for o in run.get('tracking_observations', [])}
+    supplied = [o.get('id') for o in (model_context or {}).get('observations', [])]
+    ids = list(dict.fromkeys(i for i in [*included_observation_ids(run), *supplied] if i in existing))
+    memo['tracking_observation_context'] = {'schema_version': 1, 'included_ids': ids,
+        'semantic_status': '仅表示已提供给整稿研究输入，不等于独立核验、观察结论已确认或问题已解决。'}
+
+
 def snapshot(run):
     identity = report_identity(run)
     observations = deepcopy(run.get('tracking_observations', []))
     current = [o for o in observations if o.get('report_identity') == identity]
+    included = included_observation_ids(run)
     return {'report_identity': identity, 'metrics': deepcopy((run.get('memo') or {}).get('tracking_metrics', [])),
             'observations': current, 'previous_report_observations': [o for o in observations if o not in current],
+            'pending_observations': [o for o in observations if o.get('id') not in included],
+            'included_observation_ids': list(included),
+            'observation_context_note': '待纳入记录跨报告版本保留；已纳入仅指整稿研究收到过该输入，不表示结论已核实。',
             'report_unchanged': True}
 
 

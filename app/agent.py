@@ -12,7 +12,8 @@ from . import store,securities,valuation,research,documents,disclosures,deep_res
 from .config import DATA
 from .schemas import RunRequest
 from .providers import model_json,ProviderError
-from .turn_constraints import constraints, enforce, latest_user, prohibited_reason, effective_rules, task_request, task_steps, NO_PER_SHARE
+from .turn_constraints import (constraints, enforce, latest_user, prohibited_reason, effective_rules, task_request,
+    task_steps, intent_clauses, affirmative_intent, proposal_adoption, execution_request)
 from .tool_capabilities import TOOLS, LABELS
 from .evidence_policy import source_fingerprint
 from .report_state import report_valuation_status, report_identity, assert_report_base, dependency_snapshot, dependency_fingerprint, link_report_valuations, valuation_snapshot
@@ -190,9 +191,22 @@ def response_amount_feedback(message, run, results):
 
 
 def assumption_changes(text,aliases):
-    """Read explicit edit targets, never mistake the old value in 'from A to B'."""
+    """Resolve typed numeric intentions before considering model quote fragments.
+
+    A from/to edit contributes only its destination. Direct assignments and
+    rejected alternatives use the same clause interpretation, so a substring
+    like PE20 cannot strip the preceding human-authored "do not use".
+    """
     changes={}
-    for clause in re.split(r'[。；;\n，,]|但是|但',text):
+    names = {alias:key for key, values in aliases.items() for alias in values}
+    label = '|'.join(re.escape(a) for a in sorted(names, key=len, reverse=True))
+    direct = re.compile(r'(?P<label>' + label + r')[^\d\n。；,，?!？!]{0,12}?(?P<value>[-+]?\d+(?:\.\d+)?)', re.I)
+    for clause in intent_clauses(text):
+        edited = set()
+        def record(key, value, start, end):
+            negative = bool(re.search(r'不要|不得|不能|无需|不必|禁止|别|暂不|先不|不再|不是|不使用|不采用|不调整|不改|不用|不\s*$', clause[:end]))
+            changes.setdefault(key,[]).append({'value':Decimal(value),'quote':clause.strip(),
+                'negative':negative,'affirmative':affirmative_intent(clause,start,end)})
         for change in re.finditer(r'(?:改为|改成|调整为|调整成|设为)\s*([-+]?\d+(?:\.\d+)?)',clause):
             prefix=clause[:change.start()]
             matches=[(m.end(),len(alias),key) for key,names in aliases.items() for alias in names
@@ -200,14 +214,16 @@ def assumption_changes(text,aliases):
             if not matches: continue
             _,_,key=max(matches)
             if change.start()-max(m[0] for m in matches)>40: continue
-            negative=bool(re.search(r'不要|不得|不能|无需|不必|禁止|别|暂不|先不|不再|不是|不使用|不采用|不调整|不改|不\s*$',prefix))
-            changes.setdefault(key,[]).append({'value':Decimal(change[1]),'quote':clause.strip(),'negative':negative})
+            record(key,change[1],change.start(),change.end())
+            edited.add(key)
+        for match in direct.finditer(clause):
+            key = next(key for alias,key in names.items() if alias.casefold()==match['label'].casefold())
+            if key not in edited:
+                record(key,match['value'],match.start(),match.end())
     return changes
 
 
-def grounded_assumptions(chat,method,assumptions,quotes):
-    texts=[m["content"] for m in chat["messages"] if m["role"]=="user"]
-    latest=task_request(chat)
+def assumption_aliases(method):
     aliases={"growth_pct":["增长率","增长","增速"],"shares_100m":["摊薄后总股本","总股本","股本","总股数"],
         "base_fcff_100m":["基期FCFF","基期 FCFF","FCFF"],"book_equity_100m":["归母净资产"],
         "ebitda_100m":["EBITDA"],"equity_bridge_100m":["桥接扣减项","桥接调整项","桥接"],
@@ -215,6 +231,30 @@ def grounded_assumptions(chat,method,assumptions,quotes):
         "cost_of_equity_pct":["股权成本"],"years":["预测期","预测年限"],"dividend_per_share":["每股股利","每股分红"]}
     aliases["multiple"]={"pe":["PE","市盈率","倍数"],"ps":["PS","市销率","倍数"],
         "pb":["PB","市净率","倍数"],"ev_ebitda":["EV/EBITDA","倍数"]}.get(method,[])
+    return aliases
+
+
+def current_parameter_intent(key, value, items):
+    """One guard for direct inputs and already displayed proposal inputs."""
+    targets=[item for item in items if item['affirmative']]
+    target_values={item['value'] for item in targets}
+    if len(target_values)>1 or target_values & {item['value'] for item in items if item['negative']}:
+        raise ValueError('参数 '+key+' 的本轮修改目标存在冲突，请先明确采用哪个新值，不能自行选择。')
+    if targets:
+        if value not in target_values:
+            raise ValueError('参数 '+key+' 未采用用户本轮明确修改后的新值。原句：'+targets[-1]['quote'][:300])
+        return targets[-1]['quote']
+    if any(item['negative'] and item['value']==value for item in items):
+        raise ValueError('参数 '+key+' 的该数值出现在否定修改请求中，不能当作已授权的新假设。')
+    if any(item['value']==value and not item['affirmative'] for item in items):
+        raise ValueError('参数 '+key+' 仅出现在讨论、询问或条件句中，尚未明确授权采用。')
+    return None
+
+
+def grounded_assumptions(chat,method,assumptions,quotes):
+    texts=[m["content"] for m in chat["messages"] if m["role"]=="user"]
+    latest=execution_request(chat)
+    aliases=assumption_aliases(method)
     edits=assumption_changes(latest,aliases)
     run=store.get_run(chat["run_id"])
     previous=next((v for v in reversed(run.get("valuation_history",[])) if v["method"]==method),None)
@@ -224,33 +264,19 @@ def grounded_assumptions(chat,method,assumptions,quotes):
         try: value=Decimal(str(raw))
         except Exception: raise ValueError("估值参数必须是数字") from None
         if not value.is_finite(): raise ValueError("估值参数必须是有限数字")
-        targets=[item for item in edits.get(key,[]) if not item['negative']]
-        target_values={item['value'] for item in targets}
-        if len(target_values)>1: raise ValueError('参数 '+key+' 的本轮修改目标存在冲突，请先明确采用哪个新值，不能自行选择。')
-        if targets:
-            if value not in target_values:
-                raise ValueError('参数 '+key+' 未采用用户本轮明确修改后的新值。原句：'+targets[-1]['quote'][:300])
-            quotes[key]=targets[-1]['quote']
-            continue
-        if any(item['negative'] and item['value']==value for item in edits.get(key,[])):
-            raise ValueError('参数 '+key+' 的该数值出现在否定修改请求中，不能当作已授权的新假设。')
-        if quote and isinstance(quote,str) and any(quote in t for t in texts):
-            numbers=re.findall(r"[-+]?\d+(?:\.\d+)?",quote.replace(",","").replace("，"," "))
-            if any(Decimal(n)==value for n in numbers): continue
-        # A clear edit such as "把 PE 改成 12 倍" is already confirmation.
-        # Recover the exact source span when the model paraphrases its quote.
-        confirmed=None
-        for alias in aliases.get(key,[]):
-            pattern=re.escape(alias)+r"[^\d\n。；,，?!？!]{0,12}([-+]?\d+(?:\.\d+)?)"
-            for match in re.finditer(pattern,latest,re.I):
-                prefix=latest[max(0,match.start()-8):match.start()]
-                if re.search(r"不要|不是|不使用|别用",prefix): continue
-                if Decimal(match.group(1))==value:
-                    confirmed=latest[match.start():match.end()];break
-            if confirmed: break
+        confirmed=current_parameter_intent(key,value,edits.get(key,[]))
         if confirmed:
             quotes[key]=confirmed
             continue
+        if quote and isinstance(quote,str):
+            # Historical consent retains its complete clause and parameter
+            # identity; an untyped number or a negated fragment is insufficient.
+            grounded = next((item for text in reversed(texts)
+                for item in assumption_changes(text,aliases).get(key,[])
+                if item['affirmative'] and item['value']==value and quote in item['quote']), None)
+            if grounded:
+                quotes[key]=grounded['quote']
+                continue
         if previous and key in previous["assumptions"] and Decimal(previous["assumptions"][key])==value: continue
         candidates=[c.strip() for c in re.split(r'[。；;\n，,]',latest) if any(re.search(re.escape(a),c,re.I) for a in aliases.get(key,[]))]
         raise ValueError("参数 "+key+" 的用户原话引用不匹配。测试增速或倍数是用户假设，不要求年报提供该假设；必须原样引用包含数值的已授权片段。"
@@ -483,16 +509,18 @@ def tool(chat,name,args,model_input_run=None):
         store.update_conversation(chat["id"],lambda c:c.setdefault("proposals",[]).append(proposal))
         return {"artifact":"proposal","proposal":proposal,"note":"待用户采用；尚未保存估值结果"}
     if name=="calculate_proposal":
-        latest=task_request(chat)
-        approval_text=re.sub(NO_PER_SHARE,'',latest)
+        latest=execution_request(chat)
         proposal=next((p for p in chat.get("proposals",[]) if p["id"]==args.get("proposal_id") and p["run_id"]==run["id"]),None)
         if not proposal: raise ValueError("未找到当前研究的已展示方案")
         if proposal.get('turn_id') and proposal['turn_id'] == chat.get('turn_id'):
             raise ValueError('此方案刚在本轮提出，尚未收到用户针对该方案的新回复；请展示方案并等待采用，不能在同一轮自提自采')
-        if re.search(r"(?:不|暂不|先不)(?:采用|确认|同意|计算|执行)|不要.{0,6}(?:采用|计算|执行)",approval_text) or not re.search(r"采用|确认|同意|按.{0,12}(?:方案|执行)|照.{0,12}方案",approval_text):
+        if not proposal_adoption(latest,proposal['id']):
             raise ValueError("尚未收到用户采用该方案的明确要求，请先展示方案")
         if valuation_change_requested(latest):
             raise ValueError("用户同时提出修改参数，请先更新方案或根据明确输入直接计算，不能原样执行旧方案")
+        edits=assumption_changes(latest,assumption_aliases(proposal['method']))
+        for key,value in proposal['assumptions'].items():
+            current_parameter_intent(key,Decimal(str(value)),edits.get(key,[]))
         latest_proposals=[p for p in chat.get("proposals",[]) if p["run_id"]==run["id"] and p["turn_id"]==proposal["turn_id"]]
         most_recent=chat.get("proposals",[])[-1]
         if proposal["id"] not in latest and (len(latest_proposals)!=1 or proposal["id"]!=most_recent["id"]):

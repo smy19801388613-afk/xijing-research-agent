@@ -244,19 +244,27 @@ def _tracking_projection(result):
         item['baseline']['quote'] = str(baseline.get('quote') or '')[:500]
         item['baseline']['quote_excerpt_only'] = bool(baseline.get('quote_excerpt_only') or len(str(baseline.get('quote') or '')) > 500)
         output['metrics'].append(item)
-    observations = result.get('observations', [])
-    output['observations'] = []
-    for observation in observations[-3:]:
+    def observation_view(observation):
         item = _fields(observation, ('id', 'metric_id', 'report_identity', 'recorded_at', 'observation',
             'assessment', 'assessment_label', 'origin', 'semantic_status', 'source_id'), 500)
         item['quote'] = str(observation.get('quote') or '')[:500]
         item['quote_excerpt_only'] = bool(observation.get('quote_excerpt_only') or len(str(observation.get('quote') or '')) > 500)
         item['source_snapshot'] = _fields(observation.get('source_snapshot') or {}, SOURCE_FIELDS, 200)
-        output['observations'].append(item)
+        metric = observation.get('metric_snapshot') or {}
+        if metric:
+            item['metric_snapshot'] = _fields(metric, ('id', 'name', 'definition', 'thesis'), 250)
+            item['metric_snapshot']['baseline'] = _fields(metric.get('baseline') or {},
+                ('status', 'value', 'period', 'source_id'), 200)
+        return item
+    observations = result.get('observations', [])
+    output['observations'] = [observation_view(o) for o in observations[-3:]]
+    pending = result.get('pending_observations', [])
+    output['pending_observations'] = [observation_view(o) for o in pending[:3]]
+    output['pending_observation_count'] = result.get('pending_observation_count', len(pending))
     output['metric_count'] = result.get('metric_count', len(result.get('metrics', [])))
     output['observation_count'] = result.get('observation_count', len(observations))
     output['previous_report_observation_count'] = result.get('previous_report_observation_count', len(result.get('previous_report_observations', [])))
-    output['context_note'] = '保留本版本全部跟踪指标和报告标识；原文可能节选，观察仅列最新三条。未展示历史不代表未记录，节选不代表重新阅读全文。'
+    output['context_note'] = '保留本版本全部跟踪指标和报告标识；原文可能节选，本版观察列最新三条，未纳入整稿的跨版本观察列最早三条。纳入研究输入不表示结论已核实，未展示不代表未记录。'
     return _analysis_prose(output, 10000)
 
 

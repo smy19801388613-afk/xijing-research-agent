@@ -413,6 +413,27 @@ def cancelled(run_id):
         row = c.execute("SELECT cancel FROM runs WHERE id=?",(run_id,)).fetchone()
     return bool(row and row[0])
 
+def research_cancelled(run_id):
+    """An old run's stop flag fences its execution, not every future discussion.
+
+    Only a verified new conversation execution bound to the saved research may
+    reuse a terminal run. Keep its original flag, state, budget and audit intact;
+    stale run workers and stale conversation turns still fail the write guard.
+    """
+    with connection() as c:
+        _check_execution(c)
+        row=c.execute('SELECT payload,cancel FROM runs WHERE id=?',(run_id,)).fetchone()
+        if not row or not row[1]: return False
+        run=json.loads(row[0]);owner=_execution.get()
+        if owner and owner['kind']=='conversation' and run.get('state') in ('cancelled','failed'):
+            current={'conversation_id':owner['id'],'turn_id':owner['turn_id']}
+            if run.get('execution_owner')!=current:
+                chat=c.execute('SELECT payload FROM conversations WHERE id=?',(owner['id'],)).fetchone()
+                if chat and json.loads(chat[0]).get('run_id')==run_id:
+                    return False
+        return True
+
+
 def cancel_run(run_id):
     with connection() as c:
         c.execute('BEGIN IMMEDIATE')

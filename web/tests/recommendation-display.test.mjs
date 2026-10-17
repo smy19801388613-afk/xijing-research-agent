@@ -36,3 +36,23 @@ test('known recommendation field tokens become Chinese display labels without re
   assert.match(html,/参照重新评估条件重新评估/);assert.match(html,/满足建仓或加仓条件后再建仓/);assert.match(html,/按减仓或退出条件减持/);
   assert.doesNotMatch(html,/exit_conditions|buy_conditions|revisit_triggers/);assert.equal(JSON.stringify(memo),original);
 });
+
+test('recommendation evidence uses its frozen version while report body can have newer text',()=>{
+  const rec={action:'watch',status:'conditional',summary:'保留旧判断',evidence_ids:['same-page']};
+  const memo={sources:[{id:'same-page',title:'正文新版本',text:'扩读后新增正文'}],recommendation_sources:[{id:'same-page',title:'建议原版本',text:'建议生成时摘录'}],investment_recommendation:rec};
+  const html=renderToStaticMarkup(React.createElement(InvestmentRecommendation,{memo}));
+  assert.match(html,/建议生成时摘录/);assert.doesNotMatch(html,/扩读后新增正文/);
+  const missing=renderToStaticMarkup(React.createElement(InvestmentRecommendation,{memo:{...memo,recommendation_sources:[],recommendation_source_gaps:['same-page']}}));
+  assert.match(missing,/缺少当时冻结的来源版本/);assert.match(missing,/此版本未附来源/);assert.doesNotMatch(missing,/扩读后新增正文/);
+  const legacy={...memo};delete legacy.recommendation_sources;
+  assert.match(renderToStaticMarkup(React.createElement(InvestmentRecommendation,{memo:legacy})),/扩读后新增正文/);
+});
+
+test('dependency changes are visible without a new market price and position actions precede rationale',()=>{
+  const memo={investment_recommendation:{action:'watch',status:'conditional',summary:'建议的完整理由',new_position:'未持仓动作',existing_position:'已持仓动作'}};
+  const run={report_sync:{recommendation_freshness:{needs_update:true,reasons:['建议引用的财务依据已变化']}}};
+  const html=renderToStaticMarkup(React.createElement(InvestmentRecommendation,{memo,run}));
+  assert.match(html,/建议引用的财务依据已变化/);
+  assert.ok(html.indexOf('未持仓动作')<html.indexOf('建议的完整理由'));
+  assert.ok(html.indexOf('已持仓动作')<html.indexOf('建议的完整理由'));
+});

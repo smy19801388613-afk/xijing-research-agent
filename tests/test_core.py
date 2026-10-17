@@ -147,13 +147,13 @@ def test_api_export_and_validation(isolated,monkeypatch):
         for fmt in ("markdown","json","html","bundle"):
             result=c.get(f"/api/runs/{run['id']}/export?format={fmt}")
             assert result.status_code==200 and len(result.content)>500
-            if fmt=="html": assert "<table>" in result.text and "<!doctype html>" in result.text
+            if fmt=="html": assert "<table" in result.text and "<thead>" in result.text and "<!doctype html>" in result.text
             if fmt=="markdown": assert "|\n|---" in result.text and "|\n\n|" not in result.text
         result=c.post(f"/api/runs/{run['id']}/scenario",json={"growth_pct":10,"pe":15})
         assert result.status_code==200 and result.json()["output"]["price"] is None
         assert c.get("/api/documents/missing/file").status_code==404
         preview=c.get(f"/api/runs/{run['id']}/export?format=html&preview=true")
-        assert preview.headers["content-disposition"].startswith("inline") and "<table>" in preview.text
+        assert preview.headers["content-disposition"].startswith("inline") and "<table" in preview.text and "<thead>" in preview.text
 
 def test_upload_and_render_original_page(isolated):
     with TestClient(main.app) as c:

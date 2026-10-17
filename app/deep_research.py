@@ -216,7 +216,8 @@ def reference_catalog(run):
         "status": f["status"], "value": f["value"], "unit": "元", "url": None,
         "published_at":f.get('announced_date'),"scope":f.get('scope'),"period_type":f.get('period_type'),"verification":verification(f,run.get("evidence",[]),run["request"]["as_of"])}
         for f in run["facts"] if f.get("status") != "conflict"}
-    refs.update({c["id"]: {"id": c["id"], "kind": "calculation", "title": c.get("label", c["id"]), "url": None}
+    refs.update({c["id"]: {"id": c["id"], "kind": "calculation", "title": c.get("label", c["id"]), "url": None,
+        "inputs": list(c.get('inputs', []))}
         for c in run["calculations"] if c.get('id') and (c.get("value") is not None or c.get("change") is not None)})
     for s in run.get("research_sources", []):
         if eligibility(s,run)['historical_eligibility']=='after_cutoff':
@@ -314,23 +315,30 @@ def validate_memo(candidate, run, allow_question_writes=True, require_tracking=F
         old_recommendation = (run.get('memo') or {}).get('investment_recommendation')
         if preserve_recommendation and old_recommendation and candidate.get('investment_recommendation') == old_recommendation:
             clean['investment_recommendation'] = deepcopy(old_recommendation)
-            frozen_recommendation_refs = {s['id']: s for s in (run.get('memo') or {}).get('sources', [])
+            previous = run.get('memo') or {}
+            # Legacy memos have only one source snapshot. Use that saved version,
+            # never today's same-ID record, when retaining their advice.
+            frozen_recommendation_refs = {s['id']: s for s in previous.get('recommendation_sources', previous.get('sources', []))
                 if s.get('id') in old_recommendation.get('evidence_ids', [])}
         else:
             clean['investment_recommendation'] = investment_recommendation.normalize(
                 candidate.get('investment_recommendation'), refs, run)
+            frozen_recommendation_refs = {sid: refs[sid] for sid in clean['investment_recommendation']['evidence_ids']}
+        recommendation_ids = clean['investment_recommendation'].get('evidence_ids', [])
+        clean['recommendation_sources'] = [deepcopy(frozen_recommendation_refs[sid]) for sid in recommendation_ids
+                                           if sid in frozen_recommendation_refs]
+        clean['recommendation_source_gaps'] = [sid for sid in recommendation_ids if sid not in frozen_recommendation_refs]
     used = list(dict.fromkeys([i for s in clean["sections"] + clean["theses"] for i in s["evidence_ids"]] +
-        [m['baseline']['source_id'] for m in clean.get('tracking_metrics', []) if m['baseline'].get('source_id')] +
-        clean.get('investment_recommendation', {}).get('evidence_ids', [])))
+        [m['baseline']['source_id'] for m in clean.get('tracking_metrics', []) if m['baseline'].get('source_id')]))
     # Exact evidence-row IDs can back a baseline even when not used in prose.
     tracking_refs = questions.catalog(run) if clean.get('tracking_metrics') else {}
     # Source records are copied by the application, never trusted from model output.
-    clean["sources"] = [deepcopy(frozen_recommendation_refs.get(i) or refs.get(i) or tracking_refs[i]) for i in used]
+    clean["sources"] = [deepcopy(refs.get(i) or tracking_refs[i]) for i in used]
     clean["limitations"] += ["结构化财务数据、原文披露与分析推断分别标记。接口来源不等于双源核验；网页搜索不能保证覆盖全部信息。",
         "没有披露日期的网页只能作为当前检索线索，不能证明历史截止日已知；公司宣传不等于独立验证。"]
     clean['limitations']=list(dict.fromkeys(clean['limitations']))
     allowed_urls = {s.get("url") for s in list(refs.values()) + list(frozen_recommendation_refs.values()) if s.get("url")}
-    prose = {k:v for k,v in clean.items() if k != 'sources'}
+    prose = {k:v for k,v in clean.items() if k not in ('sources', 'recommendation_sources')}
     if 'investment_recommendation' in prose:
         # Frozen provider metadata is application-owned, not a model-authored
         # assertion that a documentation URL has been read as company evidence.
@@ -581,7 +589,7 @@ def build(run_id, question, chat=None, progress=None):
         store.update_run(run_id,change)
     def update(label=None):
         from .research import Cancelled
-        if store.cancelled(run_id) or (chat.get("id") and store.conversation_cancelled(chat["id"])):
+        if store.research_cancelled(run_id) or (chat.get("id") and store.conversation_cancelled(chat["id"])):
             raise Cancelled()
         if time.monotonic() >= deadline:
             raise ProviderError("深度研究达到时间预算，已保留检索来源；旧报告未被覆盖")
@@ -776,6 +784,7 @@ def build(run_id, question, chat=None, progress=None):
             "draft": draft, "review": review, "validation_error": validation_error}, 7800, reasoning=True)
         record('repaired_draft',draft)
         memo = validate_memo(draft, run,allow_question_writes=allow_question_writes,require_tracking=True,require_recommendation=True)
+    research_tracking.freeze_observation_context(memo, run, context.get('research_extensions', {}).get('tracking'))
     memo["review"] = {"issues": review.get("issues", []), "strengths": review.get("strengths", []),
         "revision_performed": bool(validation_error or review.get("requires_revision")),
         "citation_validation": "passed", "semantic_status": "模型审阅完成，关键判断仍需研究员复核"}
@@ -835,7 +844,7 @@ def refine(run_id, question, chat, progress=None):
             entry.update(fields,calls=list(calls))
         store.update_run(run_id,change)
     def check():
-        if store.cancelled(run_id) or store.conversation_cancelled(chat['id']): raise Cancelled()
+        if store.research_cancelled(run_id) or store.conversation_cancelled(chat['id']): raise Cancelled()
         store.check_execution()
     def call(payload):
         check()
@@ -914,6 +923,8 @@ current_edit_values是本次允许修改的现有内容；previous_report仅用�
         except ValueError as error:
             record(validation_error=str(error))
             raise
+    research_tracking.freeze_observation_context(memo, run, payload.get('research_extensions', {}).get('tracking'),
+                                                limited=edit_scope.limited)
     memo['review']=review_state.after_refinement(prior_review,run.get('report_revision',1),edit_scope.paths)
     if recovered_review:
         memo['review']['semantic_status']+=' 已从未发布草稿恢复实际历史反方审阅意见并标为待复核；未恢复旧稿正文，也不表示当前报告已重新独立审阅。'

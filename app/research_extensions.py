@@ -28,7 +28,7 @@ def sources(run):
         add('period-analysis-' + _hash(semantic)[:16], '财务期间分析（派生）',
             {'records': semantic, 'analysis': analyze(records), 'current_input_fingerprints': inputs,
              'note': '期间、单位和原文匹配不等于数字已核验；需结合原文逐项复核。'},
-            any(r.get('source_status')=='source_changed' for r in records))
+            any(r.get('basis_conflict') or r.get('source_status')=='source_changed' for r in records))
     view = summary(run) if run.get('valuation_sensitivity_history') or run.get('comparable_analyses') else {}
     for s in view.get('sensitivities', []):
         add(s['id'], '估值敏感性情景（派生）', {k: s.get(k) for k in
@@ -65,10 +65,16 @@ def context(run):
         value['sensitivity'] = [{k: s.get(k) for k in ('id', 'method', 'base_scenario_id', 'fixed_assumptions', 'axes', 'envelope', 'valid_cells', 'invalid_cells', 'stale', 'notes')} for s in view['sensitivities'][-3:]]
         value['comparables'] = [{**{k: s.get(k) for k in ('id', 'method', 'period_kind', 'period_label', 'valuation_date', 'currency', 'statistics', 'source_changed', 'notes')},
             'rows': [{k: r.get(k) for k in ('company','ticker','multiple_value','included','exclusion_reason','source_refs')} for r in s.get('rows',[])]} for s in view['comparables'][-3:]]
-    if (run.get('memo') or {}).get('tracking_metrics'):
+    if (run.get('memo') or {}).get('tracking_metrics') or run.get('tracking_observations'):
         tracking = tracking_snapshot(run)
-        value['tracking'] = {k: tracking[k] for k in ('report_identity', 'metrics', 'observations')}
-        value['tracking']['observations'] = value['tracking']['observations'][-8:]
+        # Prior report identity does not mean a record has been considered. Feed
+        # the oldest pending records first so a bounded context cannot starve them.
+        pending = tracking['pending_observations']
+        selected = pending[:8] if pending else tracking['observations'][-8:]
+        value['tracking'] = {k: tracking[k] for k in ('report_identity', 'metrics')}
+        value['tracking'].update(observations=selected, pending_count=len(pending),
+            omitted_pending_count=max(0, len(pending)-len(selected)),
+            context_note=tracking['observation_context_note'])
     return value
 
 

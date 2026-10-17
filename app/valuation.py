@@ -43,13 +43,17 @@ CATALOG=[
 ]
 
 def options(run):
+    from .financial_basis import conflicts
+    blocked={(i['metric'],i['year']):i['message'] for i in conflicts(run)}
     result=[]
     for method in CATALOG:
         item=dict(method);metric=method.get("metric")
         fact=next((f for f in run["facts"] if f["metric"]==metric and f["year"]==run["request"]["year"] and f["status"]!="conflict"),None) if metric else None
         item["base_fact"]=fact
-        item["ready_base"]=bool(fact and Decimal(fact["value"])>0) if metric else False
+        issue=blocked.get((metric,run['request']['year']))
+        item["ready_base"]=bool(fact and Decimal(fact["value"])>0 and not issue) if metric else False
         item["basis_note"]=("历史基数已取得；预测增速与倍数仍需确认" if item["ready_base"] else "需要补充对应指标与假设")
+        if issue: item['basis_note']=issue
         result.append(item)
     return result
 
@@ -79,6 +83,8 @@ def calculate(run,method,inputs,origin="form",quotes=None):
     fact_ids=[];base=None;rows=[];notes=[]
     out={"equity_value_100m":None,"enterprise_value_100m":None,"price":None}
     if method in ("pe","ps"):
+        from .financial_basis import assert_usable
+        assert_usable(run,spec['metric'],run['request']['year'])
         fact=next((f for f in run["facts"] if f["metric"]==spec["metric"] and f["year"]==run["request"]["year"] and f["status"]!="conflict"),None)
         if not fact or Decimal(fact["value"])<=0: raise ValueError("缺少无冲突且为正的历史基数，不能计算该方法")
         if not verification(fact,run.get("evidence",[]),run["request"].get("as_of"))["usable_for_calculation"]:

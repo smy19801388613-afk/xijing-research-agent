@@ -33,12 +33,30 @@ def verification(fact,evidence=(),as_of=None):
 
 
 def fact_view(fact,run):
-    return {**fact,'verification':verification(fact,run.get('evidence',[]),run.get('request',{}).get('as_of'))}
+    from .financial_basis import conflicts
+    state=verification(fact,run.get('evidence',[]),run.get('request',{}).get('as_of'))
+    issues=[i for i in conflicts(run) if fact['id'] in i['fact_ids']]
+    if issues:
+        state={**state,'usable_for_calculation':False,'calculation_basis_issues':issues,
+               'label':state['label']+' · 财务底稿冲突'}
+    return {**fact,'verification':state}
 
 
 def enrich(run):
+    from .financial_basis import conflicts
     run = comparison_view(run)
+    issues=conflicts(run)
+    blocked={fid:i['message'] for i in issues for fid in i['fact_ids']}
+    for calc in run['calculations']:
+        reasons=list(dict.fromkeys(blocked[fid] for fid in calc.get('inputs',[]) if fid in blocked))
+        if reasons:
+            calc.update(value=None,change=None,reason='；'.join(reasons),basis_conflict=True)
+    if issues:
+        from .finance import comparison_check
+        run['checks']=[comparison_check(run['calculations']) if c.get('kind')=='calculation'
+                       and c.get('label')=='核心同比计算' else c for c in run.get('checks',[])]
     run['facts']=[fact_view(f,run) for f in run.get('facts',[])]
+    if issues: run['financial_basis_issues']=issues
     return run
 
 

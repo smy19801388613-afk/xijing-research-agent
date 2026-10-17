@@ -20,6 +20,29 @@ def parsed_date(value):
         return None
 
 
+def _associated_facts(source, run):
+    """Follow stored calculation inputs without reentering source catalogs."""
+    sid = source.get('id')
+    calculations = {c['id']: c for c in run.get('calculations', []) if c.get('id')}
+    pending = [sid] if isinstance(sid, str) else []
+    # The stored graph wins over a compact or caller-supplied reference. Other
+    # derived artifacts may provide their own input IDs without being annual
+    # calculations; do not interpret their JSON text as trusted dependencies.
+    if source.get('kind') == 'calculation' and sid not in calculations:
+        pending += [i for i in source.get('inputs', []) if isinstance(i, str)]
+    seen = set()
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        calc = calculations.get(current)
+        if calc:
+            pending.extend(i for i in calc.get('inputs', []) if isinstance(i, str) and i not in seen)
+    return [f for f in run.get('facts', []) if f.get('id') in seen
+            or any(i in seen for i in f.get('evidence_ids', []))]
+
+
 def eligibility(source, run=None, as_of=None):
     """Explain what an observed record permits, without promoting its provenance.
 
@@ -42,12 +65,15 @@ def eligibility(source, run=None, as_of=None):
     original = kind in ('api', 'document', 'material')
     body = bool(content) and not failed and not lead and (state in BODY_STATES or ocr or original)
     derived = kind in ('calculation', 'valuation')
-    sid = source.get('id')
-    associated = [f for f in run.get('facts', []) if f.get('id') == sid or sid in f.get('evidence_ids', [])]
+    associated = _associated_facts(source, run)
     states = [verification(f, run.get('evidence', []), str(cutoff) if cutoff else None) for f in associated]
     if not states and isinstance(source.get('verification'), dict):
         states = [source['verification']]
     conflict = source.get('status') == 'conflict' or any(s.get('state') == 'conflict' for s in states)
+    if associated and run.get('financial_period_records'):
+        from .financial_basis import conflicts
+        blocked = {fid for issue in conflicts(run) for fid in issue['fact_ids']}
+        conflict = conflict or any(f.get('id') in blocked for f in associated)
     ocr = ocr or any(s.get('state') == 'ocr_pending' for s in states)
     unusable = any(s.get('state') in ('missing', 'unverified') for s in states)
     financial = kind == 'financial_fact'
@@ -77,5 +103,7 @@ def source_fingerprint(source, run=None):
     """Exclude retrieval timestamps so rereading identical material is idempotent."""
     value = {k: source.get(k) for k in ('id', 'kind', 'text', 'quote', 'published_at', 'announced_date',
                                       'read_status', 'extraction', 'status', 'value', 'sha256')}
+    if 'inputs' in source:
+        value['inputs'] = source['inputs']
     value['eligibility'] = eligibility(source, run)
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode()).hexdigest()

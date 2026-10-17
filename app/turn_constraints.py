@@ -5,7 +5,9 @@ from .tool_capabilities import TOOLS
 from .evidence_policy import eligibility
 
 NEG = r'(?:不要|不得|不能|不用|无需|不必|禁止|别|暂不|先不|不再|不)'
-REPORT = r'(?:报告|研报|底稿|备忘录|研究结果)'
+# The typed financial-period ledger is a materials artifact, not a memo.
+# Keep this subject shared by permissions and completion requirements.
+REPORT = r'(?:报告|研报|(?<!期间)底稿|备忘录|研究结果)'
 DEEP_RESEARCH = r'(?:联网|上网)?(?:深研|深度研究)'
 NO_DEEP_RESEARCH = NEG + r'\s*(?:再)?\s*(?:进行|做|启动|开展|使用)?\s*' + DEEP_RESEARCH
 PER_SHARE = r'每股(?:价值|估值|价格)'
@@ -112,6 +114,63 @@ def staged_limits(text):
 
 def latest_user(chat):
     return next((m.get('content', '') for m in reversed(chat.get('messages', [])) if m.get('role') == 'user'), '')
+
+
+def intent_clauses(text):
+    """Keep negation attached to its object, including contrasted alternatives."""
+    return [c.strip() for c in re.split(r'[。；;\n，,！？!?]|但是|但|而是', text) if c.strip()]
+
+
+def affirmative_intent(clause, start, end):
+    """A quoted occurrence is not consent when its human clause is nonaffirmative."""
+    before = clause[:start]
+    phrase = clause[start:end]
+    after = clause[end:]
+    if re.search(NEG + r'|尚未|没有|未曾', before + phrase): return False
+    if re.search(r'是否|能否|能不能|可否|要不要|如果|假如|假若|若|考虑|讨论|解释|比较|等待|等我|待我|待用户', before): return False
+    if re.search(r'是否|能否|可否|会怎样|会如何|合适吗|正确吗|可以吗|行吗|[吗么]\s*$', after): return False
+    return True
+
+
+def proposal_adoption(text, proposal_id=None):
+    """Share present adoption semantics between policy and tool dispatch.
+
+    Confirming a plan's data/units is a check, not accepting the plan. A named
+    card also binds consent to that card; ordinary short confirmations remain
+    usable when dispatch has independently resolved one latest proposal.
+    """
+    descriptor = r'(?:(?:该|这个|此|当前|刚才|上述|上面|已展示|已保存|上一轮|已确认)(?:的)?\s*)?'
+    identity = r'[a-f0-9]{8}(?![a-f0-9])'
+    target = descriptor + PLAN + r'(?:\s*(?:编号\s*)?(?P<id>' + identity + r'))?'
+    pattern = re.compile(r'(?:确认采用|同意采用|采用|采纳|确认|同意|批准|计算|执行)\s*' + target, re.I)
+    by_plan = re.compile(r'(?:按|按照|照)\s*' + target + r'\s*(?:计算|执行|来算|进行)', re.I)
+    accepted = False
+    for clause in intent_clauses(re.sub(NO_PER_SHARE, '', text)):
+        if re.fullmatch(r'(?:本轮|现在)?\s*' + NEG + r'\s*(?:再)?(?:采用|采纳|确认|同意|执行|计算)', clause):
+            return False
+        for pattern_item in (pattern, by_plan):
+            for match in pattern_item.finditer(clause):
+                # The object of "确认方案中的股本" is a property of a plan.
+                if re.match(r'\s*(?:中|里|内|的|是否|能否|后|之后|以后)', clause[match.end():]): continue
+                if match.group('id') and proposal_id and match.group('id').lower() != proposal_id.lower(): continue
+                if re.search(NEG + r'|尚未|没有|未曾', clause[:match.end()]): return False
+                if affirmative_intent(clause, match.start(), match.end()): accepted = True
+        # "确认采用" or "同意" can answer the single displayed card, but
+        # "请确认单位" cannot. Ambiguous/multiple cards are checked at dispatch.
+        if re.fullmatch(r'(?:我|我们)?\s*(?:现在|已经)?\s*(?:确认采用|同意采用|确认|同意|采用|采纳)', clause):
+            accepted = True
+    return accepted
+
+
+def execution_request(chat):
+    """Only a pure continuation reuses earlier execution consent."""
+    from .task_contract import is_pure_continuation
+    human = latest_user(chat)
+    if not is_pure_continuation(human): return human
+    # The aggregate task text also contains superseded steering. Resume the
+    # latest substantive human instruction, never an older affirmative clause.
+    return next((m.get('content', '') for m in reversed(chat.get('messages', []))
+        if m.get('role') == 'user' and not is_pure_continuation(m.get('content', ''))), task_request(chat))
 
 
 def requires_body_read(text):
@@ -258,13 +317,12 @@ def explicit_permissions(text):
         if (not re.search(r'敏感性|可比', clause)
                 and re.search(r'(?:计算|重算|重新计算|执行|进行)\s*(?:' + SAVED_VALUATION + r')?\s*' + BASE_VALUATION, clause, re.I)):
             allowed.add('no_valuation_recalculation')
-        adoption = re.search(r'(?:确认采用|同意采用|采用)\s*(?:该|这个|此|当前|刚才|上述|上面|已展示|已保存|上一轮)?(?:的)?\s*' + PLAN, clause)
-        if adoption and not re.search(r'(?:未|没有|尚未|是否|能否|考虑|如果|若|等|待).{0,12}$', clause[:adoption.start()]):
-            allowed.update(('no_calculation', 'no_valuation', 'no_valuation_recalculation'))
         if re.search(r'(?:保存|修改|更新|建立|记录).{0,8}(?:问题|研究记录)', clause): allowed.add('no_question_writes')
         if re.search(r'(?:接入|挂载|上传|绑定).{0,8}(?:PDF|文件|材料|文档|附件)', clause,re.I): allowed.add('no_material_writes')
         if re.search(r'(?:阅读|读取|查阅|补读).{0,8}(?:PDF|文件|文档|年报)',clause,re.I): allowed.add('no_pdf_read')
         if re.search(r'(?:阅读|读取|查阅|补读).{0,8}网页',clause): allowed.add('no_web_read')
+    if proposal_adoption(text):
+        allowed.update(('no_calculation', 'no_valuation', 'no_valuation_recalculation'))
     # "等我采用方案后再计算" mentions a future action, not a release of a
     # standing/current restriction. The current stage wins even when a separate
     # clause cancels an unrelated restriction.

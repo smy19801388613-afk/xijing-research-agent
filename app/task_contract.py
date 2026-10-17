@@ -61,7 +61,7 @@ def report_edit_requested(text):
 
 def requested_artifacts(text, rules=None):
     """One set of execution postconditions, also used by the legacy wrapper."""
-    from .turn_constraints import constraints
+    from .turn_constraints import constraints, REPORT
     required = set()
     for clause in re.split(r'[。；;\n，,]', text):
         if re.search(r'怎么|如何|是否|能否|不要|暂不|先不|无需|不必|禁止', clause):
@@ -80,14 +80,14 @@ def requested_artifacts(text, rules=None):
         if re.search(r'(?:计算|生成|保存|执行).{0,25}敏感性|敏感性.{0,15}(?:计算|生成|保存)', clause): required.add('sensitivity')
         if re.search(r'(?:整理|保存|生成).{0,25}可比(?:公司|倍数|依据)', clause): required.add('comparables')
         if re.search(r'(?:登记|保存).{0,15}财务期间', clause): required.add('financial_period_records')
-        elif re.search(r'分析.{0,15}财务期间', clause): required.add('financial_period_analysis')
+        if re.search(r'分析.{0,15}财务期间', clause): required.add('financial_period_analysis')
         if re.search(r'(?:拆分|计算).{0,15}(?:各季度|单季|季度同比|季度环比|扣非桥)', clause): required.add('financial_period_analysis')
         if re.search(r'(?:保存|记录|追加).{0,12}(?:跟踪观察|观察记录)', clause): required.add('tracking_observation')
     if valuation and re.search(r'(?:整理|提出|生成|设计|给出).{0,30}(?:方案|参数)|方案卡片', text):
         if not re.search(r'不要.{0,8}(?:方案|卡片)|暂不.{0,8}(?:方案|卡片)', text):
             required.add('proposal')
     for clause in re.split(r'[。；;\n，,、]', text):
-        report = re.search(r'(?:生成|撰写|更新|修改|修订|改写|重写|写进|写入|保存).{0,18}(?:报告|研报|底稿|备忘录|研究结果)|(?:报告|研报|底稿|备忘录).{0,8}(?:更新|修改|修订|改为|改成|重写|保存)', clause)
+        report = re.search(r'(?:生成|撰写|更新|修改|修订|改写|重写|写进|写入|保存).{0,18}' + REPORT + '|' + REPORT + r'.{0,8}(?:更新|修改|修订|改为|改成|重写|保存)', clause)
         if report:
             prefix = clause[max(0, report.start()-8):report.start()]
             if not re.search(r'不要|暂不|先不|不必|无需|别|如何|怎么|是否', prefix+report.group(0)[:3]) and not re.search(r'不(?:再|直接|自动|擅自)?\s*$', prefix):

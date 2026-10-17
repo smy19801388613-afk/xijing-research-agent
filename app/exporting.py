@@ -4,8 +4,9 @@ import re
 from copy import deepcopy
 from html import escape
 from decimal import Decimal,InvalidOperation
-from .finance import METRICS,number,comparison_view
-from .fact_state import verification
+from .finance import METRICS,number
+from .fact_state import verification, enrich
+from .report_styles import REPORT_CSS
 from .review_state import issue_text
 
 DOCUMENT_LINK = re.compile(r'(?:https?://(?:127\.0\.0\.1|localhost)(?::\d+)?)?/api/documents/([\w-]+)/file')
@@ -26,6 +27,29 @@ def calculation_change(calc):
     if calc and number(calc.get('value')) is not None: return f"{number(calc['value']):+.2f}%"
     if calc and number(calc.get('change')) is not None: return f"金额变化 {number(calc['change'])/Decimal(100000000):+.2f} 亿元"
     return '不适用/缺失'
+
+
+def financial_amount(fact):
+    value = number(fact.get('value')) if fact else None
+    return f'{value/Decimal(100000000):,.2f}' if value is not None else '缺失'
+
+
+def fact_source_label(fact, run):
+    if not fact: return '缺失'
+    return (fact.get('verification') or verification(fact, run.get('evidence', []), run['request'].get('as_of')))['label']
+
+
+def basis_messages(run):
+    from .financial_basis import conflicts
+    return list(dict.fromkeys(i['message'] for i in [*run.get('financial_basis_issues', []), *conflicts(run)] if i.get('message')))
+
+
+def source_description(source):
+    state=source.get('read_status') or source.get('extraction') or source.get('status') or source.get('kind')
+    return {'pdf_text':'PDF原文','public_pdf_text':'公开PDF原文','body_read':'已读网页正文',
+        'article_text':'网页正文','original_record':'接口原始记录','search_snippet':'搜索摘要',
+        'api':'接口记录','pdf':'PDF文档','document':'文档原文','windows_ocr':'OCR待复核',
+        'ocr':'OCR待复核'}.get(state,'来源材料')
 
 def current_valuations(run):
     latest={}
@@ -182,6 +206,12 @@ def memo_references(memo,ids):
     catalog={s['id']:s for s in memo.get('sources',[])}
     return [catalog[i] for i in ids if i in catalog]
 
+
+def recommendation_sources(memo):
+    """An explicit frozen catalog, even empty, owns the old recommendation."""
+    sources = memo['recommendation_sources'] if 'recommendation_sources' in memo else memo.get('sources', [])
+    return [s for s in sources if isinstance(s, dict)] if isinstance(sources, list) else []
+
 def export_url(url):
     # Downloaded reports must still resolve local evidence outside the app URL.
     return 'http://127.0.0.1:8920'+url if url.startswith('/api/documents/') else url
@@ -229,7 +259,7 @@ def _recommendation_url(value):
 
 
 def _recommendation_references(memo,rec):
-    sources={s.get('id'):s for s in memo.get('sources',[]) if isinstance(s,dict)}
+    sources={s.get('id'):s for s in recommendation_sources(memo)}
     evidence=[sources.get(key,{'id':key,'title':str(key)+' · 此版本未附来源'}) for key in rec.get('evidence_ids',[])]
     scenarios={v.get('id'):v for v in (memo.get('valuation_context') or {}).get('scenarios',[]) if isinstance(v,dict)}
     scenarios.update({v.get('scenario_id'):v for v in rec.get('valuation_basis',[]) if isinstance(v,dict)})
@@ -256,8 +286,9 @@ def _recommendation_quote(rec,memo):
     quote=rec.get('market_snapshot') or {}
     if not isinstance(quote,dict): return None
     price=_finite_decimal(quote.get('price'))
-    has_source=quote.get('source_id') and (any(s.get('id')==quote['source_id'] for s in memo.get('sources',[]))
-        or quote.get('text') and _recommendation_url(quote.get('source_url')))
+    has_source=quote.get('source_id') and any(s.get('id')==quote['source_id'] for s in recommendation_sources(memo))
+    if 'recommendation_sources' not in memo:
+        has_source = has_source or (quote.get('source_id') and quote.get('text') and _recommendation_url(quote.get('source_url')))
     return quote if quote.get('status')=='available' and price is not None and price>0 and quote.get('trade_date') and has_source else None
 
 
@@ -276,17 +307,11 @@ def _recommendation_comparisons(rec,quote):
 
 
 def recommendation_freshness(run):
-    """A title-only edit does not refresh the decision or its frozen market data."""
-    rec=(run.get('memo') or {}).get('investment_recommendation') or {}
-    if not rec: return ''
-    def signature(value):
-        value=value or {}
-        return [value.get(k) if k!='price' else _finite_decimal(value.get(k)) for k in ('status','ticker','price','currency','trade_date','as_of')]
-    if run.get('market_snapshot') and signature(run['market_snapshot'])!=signature(rec.get('market_snapshot')):
-        return '当前行情资料已变化。本建议仍采用原快照与原判断；需要重新核验并修订建议。局部文字修改不会更新这些依据。'
-    if rec.get('as_of') and run.get('request',{}).get('as_of') and rec['as_of']!=run['request']['as_of']:
-        return '研究截止日已变化。本建议仍采用原快照与原判断；需要重新核验并修订建议。局部文字修改不会更新这些依据。'
-    return ''
+    """Use the same source, valuation and cutoff dependency state as the app."""
+    from .questions import report_sync
+    state=report_sync(run)['recommendation_freshness']
+    if not state['needs_update']: return ''
+    return '本建议依据需要重新核验。'+'；'.join(state['reasons'])+'。局部文字修改不会更新这些依据。'
 
 
 def _markdown_text(value):
@@ -335,11 +360,18 @@ def recommendation_markdown(memo,freshness=''):
     return '\n\n'.join(lines)
 
 
+def reading_number_html(value):
+    """Round only the reading surface; the original Decimal remains inspectable."""
+    n = _finite_decimal(value)
+    if n is None: return escape(str(value))
+    return '<span title="原始值：'+escape(str(value),quote=True)+'">'+f'{n:,.2f}'+'</span>'
+
+
 def recommendation_html(memo,freshness=''):
     rec=memo.get('investment_recommendation')
     if not isinstance(rec,dict): return '<section class="recommendation"><h2>投资建议</h2><p>此版本尚未形成明确建议。原研究立场保留。</p></section>'
     def t(value): return escape(str(value),quote=True)
-    parts=['<section class="recommendation"><h2>投资建议：'+recommendation_label(rec)+'</h2>',prose_html(_recommendation_text(rec.get('summary',''))),
+    parts=['<section class="recommendation"><h2>投资建议：'+recommendation_label(rec)+'</h2>',
            '<p>判断依据：'+RECOMMENDATION_BASES.get(rec.get('basis'),'待明确')+'</p>',
            '<p>期限：'+t(_recommendation_text(rec.get('horizon') or '待明确'))+' · 置信度：'+RECOMMENDATION_CONFIDENCE.get(rec.get('confidence'),'待评估')
            +(' · 截至：'+t(rec['as_of']) if rec.get('as_of') else '')+'</p>',
@@ -349,15 +381,19 @@ def recommendation_html(memo,freshness=''):
     quote=_recommendation_quote(rec,memo)
     if quote:
         url=_recommendation_url(quote.get('source_url'))
-        parts.append('<p>'+('参考收盘价（适用性待核实）：' if quote.get('decision_eligible') is False else '参考收盘价：')+'<strong>'+t(quote['price'])+' '+t(quote.get('currency',''))+'</strong> · 证券：'+t(quote.get('ticker','未记录'))+' · 交易日：'+t(quote['trade_date'])
-                     +(' · <a href="'+t(url)+'">行情来源</a>' if url else '')+'</p>')
+        parts.append('<div class="recommendation-pricing"><div class="price-tile"><span>'+('参考收盘价（适用性待核实）' if quote.get('decision_eligible') is False else '参考收盘价')+'</span><strong>'+reading_number_html(quote['price'])+' <small>'+t(quote.get('currency',''))+'</small></strong><span>'+t(quote.get('ticker','未记录'))+' · 交易日 '+t(quote['trade_date'])+'</span>'
+                     +('<a href="'+t(url)+'">行情来源</a>' if url else '')+'</div>')
         if quote.get('decision_eligible') is False and quote.get('decision_gaps'):
             parts.append('<p>行情适用限制：'+t('；'.join(quote['decision_gaps']))+'</p>')
         for item in _recommendation_comparisons(rec,quote):
-            parts.append('<p>估值情景：'+t(item.get('scenario_price',''))+' '+t(item.get('currency',''))+'；相对所列参考价的假设空间：'
-                         +t(item.get('upside_pct',''))+'%；来自已保存的用户假设情景，不代表收益预测。</p>')
+            parts.append('<div class="price-tile"><span>估值情景</span><strong>'+reading_number_html(item.get('scenario_price',''))+' <small>'+t(item.get('currency',''))+'</small></strong><span>相对所列参考价的假设空间：'
+                         +reading_number_html(item.get('upside_pct',''))+'%</span><span class="muted">来自已保存的用户假设情景，不代表收益预测。</span></div>')
+        parts.append('</div>')
+    if rec.get('summary'): parts.append('<h3>建议理由</h3>'+prose_html(_recommendation_text(rec['summary'])))
+    parts.append('<div class="recommendation-conditions">')
     for field,label in RECOMMENDATION_LISTS:
-        if rec.get(field): parts.append('<h3>'+label+'</h3><ul>'+''.join('<li>'+t(_recommendation_text(item))+'</li>' for item in rec[field])+'</ul>')
+        if rec.get(field): parts.append('<section><h3>'+label+'</h3><ul>'+''.join('<li>'+t(_recommendation_text(item))+'</li>' for item in rec[field])+'</ul></section>')
+    parts.append('</div>')
     evidence,valuations=_recommendation_references(memo,rec)
     if evidence:
         parts+=['<h3>建议依据</h3><ul>']
@@ -368,7 +404,7 @@ def recommendation_html(memo,freshness=''):
     if valuations:
         parts+=['<h3>本版本引用的估值情景</h3>']
         for item in valuations:
-            parts+=['<details><summary>'+t(item.get('method_name') or item.get('method') or item.get('scenario_id','估值'))+'</summary>']
+            parts+=['<details open><summary>'+t(item.get('method_name') or item.get('method') or item.get('scenario_id','估值'))+'</summary>']
             if item.get('assumptions'): parts.append('<p>用户假设：'+t(_recommendation_assumptions(item))+'</p>')
             output=item.get('output') or {}
             if output.get('price') is not None: parts.append('<p>情景每股价值：'+t(output['price'])+'</p>')
@@ -463,27 +499,31 @@ def extension_html(value):
     return ''.join(blocks)
 
 def markdown(run, audit=False, document_paths=None):
-    if not audit: run = comparison_view(run)
+    if not audit: run = enrich(run)
     run=rewrite_document_links(run,document_paths) if document_paths is not None else deepcopy(run)
     req=run["request"];memo=run.get("memo") or {}
-    lines=[f"# {memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究'}",f"研究问题：{req['question']}",
-        f"截止日：{req['as_of']} | 模式：{'样例回放' if req['mode']=='sample' else '实时研究'} | 状态：{run['state']}",
-        delivery_note(run,audit,document_paths is not None),recommendation_markdown(memo,recommendation_freshness(run)),
+    lines=[f"# {memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究'}",
+        f"**{run['company']} · {req['ticker']}**  |  截止日：{req['as_of']}  |  报告第 {run.get('report_revision',1)} 版"+('  |  样例回放，非实时数据' if req.get('mode')=='sample' else ''),
+        f"研究问题：{req['question']}",recommendation_markdown(memo,recommendation_freshness(run)),
         "\n## 核心财务事实（人民币亿元）","| 指标 | 本期 | 上期 | 同比 / 金额变化 |","|---|---:|---:|---:|"]
     for metric,meta in METRICS.items():
         vals=[]
         for year in (req["year"],req["year"]-1):
             f=next((f for f in run["facts"] if f["metric"]==metric and f["year"]==year),None)
-            vals.append(f"{number(f['value'])/Decimal(100000000):,.2f}" if f else "缺失")
+            vals.append(financial_amount(f))
         c=next((c for c in run["calculations"] if c["metric"]==metric),None)
         rate=calculation_change(c)
         lines.append(f"| {meta['label']} | {vals[0]} | {vals[1]} | {rate} |")
-    lines += ["\n来源状态："+"；".join(f["label"]+" "+str(f["year"])+"："+verification(f,run.get("evidence",[]))["label"] for f in run["facts"])]
+    if basis_messages(run):
+        lines += ['\n### 财务口径冲突'] + ['- '+message for message in basis_messages(run)]
+        if audit: lines += ['审计版保留原始计算值；存在上述冲突的结果不代表当前可用结论。']
+    lines += ["\n来源状态："+"；".join(f["label"]+" "+str(f["year"])+"："+fact_source_label(f,run) for f in run["facts"])]
     lines += ["\n同比公式：(本期 / 上期 - 1) × 100%；零或负基期不套用该公式。",
-        "\n## 研究判断（待复核）",memo.get("summary","研究尚未完成。")]
+        "\n## 核心判断",memo.get("summary","研究尚未完成。")]
     if memo.get('stance'): lines += ['研究立场：'+memo['stance']]
+    if memo.get('theses'): lines += ['\n## 核心投资论点']
     for t in memo.get("theses",[]):
-        lines += ["\n### "+t["title"],t["body"],"依据："+(reference_markdown(memo,t.get('evidence_ids',[])) or ", ".join(t["fact_ids"])),
+        lines += ["\n### "+t["title"],t["body"],"依据："+(reference_markdown(memo,t.get('evidence_ids',[])) or ", ".join(t.get("fact_ids",[])) or '证据待补充'),
             "反方证据/替代解释："+t["counter_evidence"],"修订条件："+t["invalidate_if"]]
     for s in memo.get('sections',[]):
         lines += ['\n## '+s['title'],s['body'],'依据：'+(reference_markdown(memo,s.get('evidence_ids',[])) or '证据待补充')]
@@ -503,11 +543,18 @@ def markdown(run, audit=False, document_paths=None):
     if memo.get('sources'):
         lines += ['\n## 研究来源目录']
         for s in memo['sources']:
-            lines += ['- '+reference_markdown(memo,[s['id']])+' | '+s.get('read_status',s.get('status',s['kind']))+' | 披露日期：'+str(s.get('published_at') or '待核实')]
+            lines += ['- '+reference_markdown(memo,[s['id']])+' | '+source_description(s)+' | 披露日期：'+str(s.get('published_at') or '待核实')]
+    frozen_sources = recommendation_sources(memo) if 'recommendation_sources' in memo else []
+    if frozen_sources:
+        lines += ['\n## 投资建议冻结来源', '以下来源随本版本建议保存，独立于后续正文资料。']
+        for s in frozen_sources:
+            lines += ['### '+reference_markdown({'sources':frozen_sources},[s['id']]),
+                      '披露日期：'+str(s.get('published_at') or '待核实'), str(s.get('text') or s.get('quote') or '')]
     if memo.get('review'):
         lines += ['\n## 反方审阅记录',memo['review'].get('semantic_status','历史审阅记录，状态待复核')]+['- '+issue_text(v) for v in memo['review'].get('issues',[])]
-    lines += ["\n## 待核实与限制"]+["- "+g["message"] for g in run["gaps"]]+["- "+s for s in memo.get("limitations",[])]
-    lines += ["\n## 数据与计算证据"]
+    limitations=[g["message"] for g in run["gaps"]]+memo.get("limitations",[])
+    if limitations: lines += ["\n## 待核实与限制"]+["- "+s for s in limitations]
+    if run["evidence"]: lines += ["\n## 数据与计算证据"]
     for e in run["evidence"]:
         lines += [f"\n### {e['id']} · {e['title']}",e["locator"],e.get("source_url") or "本地上传文件",e["quote"]]
     if audit: lines += ["\n## 计算记录"]+[json.dumps(c,ensure_ascii=False) for c in run["calculations"]]
@@ -522,40 +569,45 @@ def markdown(run, audit=False, document_paths=None):
     if audit and run.get("attached_documents"):
         lines += ["\n## 对话补充材料", "以下材料已接入全文查阅，未自动覆盖已核验财务事实。"]+[json.dumps(d,ensure_ascii=False) for d in run["attached_documents"]]
     if audit: lines += ["\n## 运行记录"]+[f"- {e['time']} {e['label']}：{e['detail']}" for e in run["events"]]
-    lines += [f"Run ID: {run['id']} | 版本: {run['version']}"]
     from .research_extensions import markdown as extension_markdown
     extra = extension_markdown(run, audit=audit)
     if extra: lines.append(extra)
+    lines += ['\n## 交付说明',delivery_note(run,audit,document_paths is not None)]
+    if audit: lines += [f"Run ID: {run['id']} | 版本: {run['version']} | 状态：{run['state']}"]
     return re.sub(r"(\|[^\n]*\|)\n\n(?=\|)",r"\1\n","\n\n".join(lines))
 
 def printable(run, audit=False, document_paths=None):
-    if not audit: run = comparison_view(run)
+    if not audit: run = enrich(run)
     run=rewrite_document_links(run,document_paths) if document_paths is not None else deepcopy(run)
     req=run["request"];memo=run.get("memo") or {}
     def e(value): return escape(str(value))
-    def amount(fact):
-        return f"{number(fact['value'])/Decimal(100000000):,.2f}" if fact else "缺失"
     rows=[]
     for metric,meta in METRICS.items():
         current=next((f for f in run["facts"] if f["metric"]==metric and f["year"]==req["year"]),None)
         previous=next((f for f in run["facts"] if f["metric"]==metric and f["year"]==req["year"]-1),None)
         calc=next((c for c in run["calculations"] if c["metric"]==metric),None)
         rate=calculation_change(calc)
-        state=verification(current,run.get("evidence",[]))["label"] if current else "缺失"
-        rows.append(f"<tr><th>{e(meta['label'])}</th><td>{amount(current)}</td><td>{amount(previous)}</td><td>{rate}</td><td>{state}</td></tr>")
-    sections=[]
+        state=fact_source_label(current,run)
+        rows.append(f"<tr><th>{e(meta['label'])}</th><td>{financial_amount(current)}</td><td>{financial_amount(previous)}</td><td>{rate}</td><td>{e(state)}</td></tr>")
+    sections=['<h2>核心投资论点</h2>'] if memo.get('theses') else []
     for t in memo.get("theses",[]):
-        sections.append("<section class='thesis'><h3>"+e(t["title"])+"</h3>"+prose_html(t["body"])+"<p class='muted'>依据："+(reference_html(memo,t.get('evidence_ids',[])) or e(" / ".join(t["fact_ids"])))+"</p><div class='counter'><b>反方 / 替代解释</b><p>"+e(t["counter_evidence"])+"</p><b>何时修订判断</b><p>"+e(t["invalidate_if"])+"</p></div></section>")
+        sections.append("<section class='thesis'><h3>"+e(t["title"])+"</h3>"+extension_html(t["body"])+"<p class='muted'>依据："+(reference_html(memo,t.get('evidence_ids',[])) or e(" / ".join(t.get("fact_ids",[]))) or '证据待补充')+"</p><div class='counter'><b>反方 / 替代解释</b><p>"+e(t["counter_evidence"])+"</p><b>何时修订判断</b><p>"+e(t["invalidate_if"])+"</p></div></section>")
     for s in memo.get('sections',[]):
-        sections.append('<section><h2>'+e(s['title'])+'</h2>'+prose_html(s['body'])+'<p class="muted">依据：'+(reference_html(memo,s.get('evidence_ids',[])) or '证据待补充')+'</p></section>')
+        sections.append('<section><h2>'+e(s['title'])+'</h2>'+extension_html(s['body'])+'<p class="muted">依据：'+(reference_html(memo,s.get('evidence_ids',[])) or '证据待补充')+'</p></section>')
+    appendix=[]
     if memo.get('sources'):
-        sections.append('<h2>研究来源目录</h2>'+''.join('<article><h3>'+reference_html(memo,[s['id']])+'</h3><p class="muted">'+e(s.get('read_status',s.get('status',s['kind'])))+' · 披露日期 '+e(s.get('published_at') or '待核实')+'</p><details><summary>来源摘录</summary>'+prose_html(s.get('text',''))+'</details></article>' for s in memo['sources']))
+        appendix.append('<h2>研究来源目录</h2>'+''.join('<article class="source-entry"><h3>'+reference_html(memo,[s['id']])+'</h3><p class="source-meta">'+e(source_description(s))+' · 披露日期 '+e(s.get('published_at') or '待核实')+'</p><details open><summary>来源摘录</summary>'+prose_html(s.get('text',''))+'</details></article>' for s in memo['sources']))
+    frozen_sources=recommendation_sources(memo) if 'recommendation_sources' in memo else []
+    if frozen_sources:
+        appendix.append('<h2>投资建议冻结来源</h2><p class="source-intro">以下来源随本版本建议保存，独立于后续正文资料。</p>'+''.join(
+            '<article class="source-entry"><h3>'+reference_html({'sources':frozen_sources},[s['id']])+'</h3><p class="source-meta">披露日期 '+e(s.get('published_at') or '待核实')+'</p>'+prose_html(s.get('text') or s.get('quote') or '')+'</article>' for s in frozen_sources))
     if memo.get('review'):
-        sections.append('<details><summary>反方审阅记录</summary><p>'+e(memo['review'].get('semantic_status','历史审阅记录，状态待复核'))+'</p><ul>'+''.join('<li>'+e(issue_text(v))+'</li>' for v in memo['review'].get('issues',[]))+'</ul></details>')
+        appendix.append('<details open><summary>反方审阅记录</summary><p>'+e(memo['review'].get('semantic_status','历史审阅记录，状态待复核'))+'</p><ul>'+''.join('<li>'+e(issue_text(v))+'</li>' for v in memo['review'].get('issues',[]))+'</ul></details>')
     limitations=[g["message"] for g in run["gaps"]]+memo.get("limitations",[])
     sources=[]
     for source in run["evidence"]:
-        link=f"<a href='{e(source['source_url'])}'>原始来源</a>" if source.get("source_url") else "本地上传"
+        url=_recommendation_url(source.get('source_url'))
+        link=f"<a href='{e(url)}'>原始来源</a>" if url else "本地记录"
         sources.append(f"<article><h3>{e(source['title'])}</h3><p class='muted'>{e(source['id'])} · {e(source['locator'])} · {link}</p><pre>{e(source['quote'])}</pre></article>")
     calc_html="".join("<pre>"+e(json.dumps(c,ensure_ascii=False,indent=2))+"</pre>" for c in run["calculations"])
     scenario_html=("<h2>用户探索情景</h2>"+"".join("<pre>"+e(json.dumps(s,ensure_ascii=False,indent=2))+"</pre>" for s in run["scenario_history"])) if audit and run.get("scenario_history") else ""
@@ -575,7 +627,8 @@ def printable(run, audit=False, document_paths=None):
         if q.get('archived') and not audit: continue
         scenario_html+='<article><h3>'+e(q['question'])+' · '+e(q['label'])+(' · 已归档' if q.get('archived') else '')+'</h3><p>'+e(q.get('answer') or '尚未回答')+'</p><p>完成条件：'+e(q['completion_criteria'])+'</p><p>优先级：'+e({'high':'高','medium':'中','low':'低'}.get(q.get('priority','medium'),'中'))+'</p>'
         for b in q.get('bindings',[]):
-            source='<a href="'+e(export_url(b['url']))+'">'+e(b['title'])+'</a>' if b.get('url') else e(b['title'])
+            url=_recommendation_url(b.get('url'))
+            source='<a href="'+e(url)+'">'+e(b['title'])+'</a>' if url else e(b['title'])
             scenario_html+='<blockquote>'+e(b['quote'])+'</blockquote><p>'+('反方' if b['relation']=='counter' else '支持')+' · '+source+' · '+e(b['reason'])+'</p>'
         if q.get('next_action'): scenario_html+='<p>下一步：'+e(q['next_action'])+'</p>'
         scenario_html+='<p>反方：'+e(q.get('counter_evidence') or '待补充')+'</p><ul>'+''.join('<li>'+e(g)+'</li>' for g in q.get('gaps',[]))+'</ul></article>'
@@ -583,15 +636,26 @@ def printable(run, audit=False, document_paths=None):
     from .research_extensions import markdown as extension_markdown
     extra = extension_markdown(run, audit=audit)
     if extra: scenario_html += '<section>' + extension_html(extra) + '</section>'
-    return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>{e(run['company'])} · 研究底稿</title>
-<style>body{{font:14px/1.85 system-ui,"Microsoft YaHei",sans-serif;color:#334155;margin:45px auto;padding:0 28px;max-width:980px}}header{{border-bottom:3px solid #a02070;padding-bottom:24px}}.brand{{font-size:12px;letter-spacing:2px;color:#64748b}}h1{{font-size:29px;margin:14px 0}}h2{{margin-top:34px;font-size:20px;color:#475569}}h3{{font-size:15px}}.muted{{font-size:12px;color:#64748b}}table{{width:100%;border-collapse:collapse;text-align:right;font-variant-numeric:tabular-nums}}td,th{{padding:12px;border-bottom:1px solid #e2e8f0}}thead{{background:#f8fafc}}th:first-child{{text-align:left}}.recommendation{{margin:28px 0;padding:22px 25px;background:#fcf6fa;border:1px solid #e7cadd;border-top:4px solid #a02070;border-radius:12px}}.recommendation h2{{margin-top:0;color:#7d1b59}}.recommendation-positions{{border-top:1px solid #ead6e3;border-bottom:1px solid #ead6e3;padding:4px 0}}.summary,.counter{{padding:18px;background:#fcf6fa;border-left:3px solid #e5bed5}}.thesis{{margin:22px 0}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 monospace;background:#f8fafc;padding:15px;border:1px solid #e2e8f0}}a{{color:#a02070}}li{{margin:7px 0}}details{{margin:18px 0}}summary{{cursor:pointer;font-weight:600}}footer{{border-top:1px solid #e2e8f0;margin-top:35px;padding-top:16px}}@media print{{body{{margin:0;max-width:none;font-size:11px}}h2,h3{{break-after:avoid}}tr,.counter{{break-inside:avoid}}.print-hint{{display:none}}}}</style></head><body>
-<header><div class="brand">析鲸AI RESEARCH DESK · {e(memo.get('generator_version',run['version']))} · 报告第 {run.get('report_revision',1)} 版</div><h1>{e(memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究')}</h1>
-<p>{e(req['question'])}</p><p class="muted">截止日 {req['as_of']} · {'样例回放' if req['mode']=='sample' else '实时研究'} · {e(run['state'])} · 模型状态 {e(run['model']['status'])}</p><p class="muted">{e(delivery_note(run,audit,document_paths is not None))}</p><p class="muted print-hint">浏览器按 Ctrl + P 可打印或保存 PDF。</p></header>
+    basis_html = ('<aside class="basis-notice"><h3>财务口径冲突</h3><ul>'+''.join('<li>'+e(message)+'</li>' for message in basis_messages(run))+'</ul></aside>') if basis_messages(run) else ''
+    if audit and basis_html: basis_html += '<p>审计版保留原始计算值；存在上述冲突的结果不代表当前可用结论。</p>'
+    followups_html=('<h2>继续研究的问题</h2><ul>'+''.join('<li>'+e(q)+'</li>' for q in memo.get('questions',[]))+'</ul>') if memo.get('questions') else ''
+    limits_html=('<h2>数据与方法限制</h2><ul>'+''.join('<li>'+e(q)+'</li>' for q in limitations)+'</ul>') if limitations else ''
+    data_evidence_html=('<h3>数据与计算证据</h3>'+''.join(sources)) if sources else ''
+    audit_meta = ('<p class="muted">运行状态：'+e(run['state'])+' · 模型状态：'+e(run.get('model',{}).get('status','未记录'))+' · Run ID: '+e(run['id'])+' · 应用版本：'+e(run['version'])+'</p>') if audit else ''
+    raw_calculations = ('<details open><summary>计算过程与原始字段</summary>'+calc_html+'</details>') if audit else ''
+    return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><link rel="icon" href="data:,"><title>{e(run['company'])} · 投资备忘录</title>
+<style>{REPORT_CSS}</style></head><body><main class="paper">
+<header class="report-header"><div class="brand">析鲸AI · 投资研究备忘录</div>
+<p class="company-line">{e(run['company'])}<span>{e(req['ticker'])}</span></p>
+<h1>{e(memo.get('title') or str(req['year'])+' 年财务研究')}</h1>
+<div class="report-meta"><span>研究截止日<strong>{e(req['as_of'])}</strong></span><span>财务年度<strong>{req['year']}</strong></span><span><strong>报告第 {run.get('report_revision',1)} 版</strong></span>{'<span>样例回放，非实时数据</span>' if req.get('mode')=='sample' else ''}</div>
+<p class="research-question"><strong>研究问题</strong> · {e(req['question'])}</p></header>
 {recommendation_html(memo,recommendation_freshness(run))}
-<h2>核心财务事实</h2><p class="muted">人民币亿元，年度合并报表。归母净利润为归属于母公司股东口径。</p>
-<table><thead><tr><th>指标</th><th>{req['year']}</th><th>{req['year']-1}</th><th>同比 / 金额变化</th><th>本期来源状态</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
-<h2>{e(memo.get('title','研究判断 · 待复核'))}</h2><p><strong>{e(memo.get('stance',''))}</strong></p><p class="summary">{e(memo.get('summary','研究尚未完成'))}</p>{''.join(sections)}
-<h2>继续研究的问题</h2><ul>{''.join('<li>'+e(q)+'</li>' for q in memo.get('questions',[]))}</ul>
-<h2>数据与方法限制</h2><ul>{''.join('<li>'+e(q)+'</li>' for q in limitations)}</ul>
-{scenario_html}<details><summary>计算过程与原始字段</summary>{calc_html}{''.join(sources)}</details>
-{('<details><summary>运行记录</summary><ul class="muted">'+events+'</ul></details>') if audit else ''}<footer class="muted">Run ID: {e(run['id'])} · 数据、计算与研究判断分别保存。完整原始响应见证据包。</footer></body></html>"""
+<section><h2>核心财务事实</h2><p class="muted">人民币亿元，年度合并报表。归母净利润为归属于母公司股东口径。</p>
+<table class="financial-table"><thead><tr><th>指标</th><th>{req['year']}</th><th>{req['year']-1}</th><th>同比 / 金额变化</th><th>本期来源</th></tr></thead><tbody>{''.join(rows)}</tbody></table>{basis_html}</section>
+<section><h2>核心判断</h2><p><strong>{e(memo.get('stance',''))}</strong></p><div class="summary">{extension_html(memo.get('summary','研究尚未完成'))}</div></section>{''.join(sections)}
+{followups_html}{limits_html}
+{scenario_html}<section class="appendix"><h2>证据附录</h2>{''.join(appendix)}
+{data_evidence_html}{raw_calculations}
+{('<details open><summary>运行记录</summary><ul class="muted">'+events+'</ul></details>') if audit else ''}</section>
+<footer><h3>交付说明</h3><p class="muted">{e(delivery_note(run,audit,document_paths is not None))}</p>{audit_meta}<p class="print-hint">浏览器打印可保存为 PDF；完整原始记录见证据包。</p></footer></main></body></html>"""

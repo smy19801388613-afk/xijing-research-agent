@@ -181,12 +181,12 @@ def test_title_edit_does_not_hide_changed_market_basis_or_refresh_old_judgment(r
     run['market_snapshot']={'status':'available','price':'88888','trade_date':'2026-10-16','ticker':'600519.SH','currency':'CNY','as_of':'2026-10-16'}
     run['memo']['title']='仅修改过的标题'
     for output in (exporting.markdown(run),exporting.printable(run)):
-        assert '当前行情资料已变化' in output and '局部文字修改不会更新这些依据' in output
+        assert '本建议依据需要重新核验' in output and '局部文字修改不会更新这些依据' in output
     assert run['memo']['investment_recommendation']==frozen
     run['market_snapshot']=deepcopy(frozen['market_snapshot'])
-    assert exporting.recommendation_freshness(run)==''
+    assert '依据指纹' in exporting.recommendation_freshness(run)
     run['request']['as_of']='2026-10-17'
-    assert '研究截止日已变化' in exporting.recommendation_freshness(run)
+    assert '需明确重评' in exporting.recommendation_freshness(run)
 
 
 def test_known_internal_prose_tokens_are_chinese_only_in_display_exports(run,tmp_path):
@@ -207,3 +207,110 @@ def test_known_internal_prose_tokens_are_chinese_only_in_display_exports(run,tmp
         assert json.loads(archive.read('analysis/investment-recommendation.json'))==before['memo']['investment_recommendation']
     assert run==before
     assert exporting._recommendation_text('my_exit_conditions exit_conditions_old exit_conditions')=='my_exit_conditions exit_conditions_old 减仓或退出条件'
+
+
+def test_frozen_advice_catalog_is_independent_of_revised_body_sources(run):
+    old=deepcopy(run['memo']['sources'][0]);old.update(title='建议保留旧披露',text='原建议采用的证据金额。')
+    run['memo']['recommendation_sources']=[old]
+    run['memo']['sources'][0].update(title='正文采用新披露',url='https://example.org/revised.pdf',text='后续新增正文证据。')
+    run['memo']['investment_recommendation']=recommendation(market_snapshot={
+        'status':'available','price':'20','currency':'CNY','trade_date':'2026-10-15','source_id':'source-a'})
+    before=deepcopy(run)
+    for render in (exporting.recommendation_markdown,exporting.recommendation_html):
+        output=render(run['memo'])
+        assert '建议保留旧披露' in output and '正文采用新披露' not in output
+        assert 'report.pdf' in output and 'revised.pdf' not in output and '参考收盘价' in output
+    for render in (exporting.markdown,exporting.printable):
+        output=render(run)
+        assert '建议保留旧披露' in output and '正文采用新披露' in output
+        assert '投资建议冻结来源' in output
+    assert run==before
+
+
+def test_explicit_empty_frozen_catalog_never_falls_back_to_body_or_embedded_quote(run):
+    run['memo']['recommendation_sources']=[]
+    run['memo']['investment_recommendation']=recommendation(market_snapshot={
+        'status':'available','price':'87654','currency':'CNY','trade_date':'2026-10-15','source_id':'source-a',
+        'text':'同一ID已改为新正文记录。','source_url':'https://example.org/quote'})
+    for render in (exporting.recommendation_markdown,exporting.recommendation_html):
+        output=render(run['memo'])
+        assert '此版本未附来源' in output and '合成公告' not in output
+        assert '参考收盘价' not in output and '87654' not in output
+
+
+def test_quote_source_can_live_only_in_frozen_advice_catalog(run):
+    run['memo']['recommendation_sources']=deepcopy(run['memo']['sources'])
+    run['memo']['sources']=[]
+    run['memo']['investment_recommendation']=recommendation(market_snapshot={
+        'status':'available','price':'20','currency':'CNY','trade_date':'2026-10-15','source_id':'source-a'})
+    for render in (exporting.recommendation_markdown,exporting.recommendation_html):
+        assert '参考收盘价' in render(run['memo'])
+
+
+def test_reading_export_has_cover_metadata_structured_body_and_printable_evidence(run):
+    run['memo']['sections']=[{'title':'经营与现金流','body':'| 指标 | 2025 |\n|---|---:|\n| 合成营业收入 | 12.50 |\n\n<script>不可执行</script>', 'evidence_ids':['source-a']}]
+    output=exporting.printable(run);parsed=Parsed(output)
+    header=output.split('<header class="report-header">',1)[1].split('</header>',1)[0]
+    for value in (run['company'],'600519.SH','2026-10-16','报告第 2 版'):
+        assert value in header
+    assert '模型状态' not in output and run['state'] not in output
+    assert '模型状态' in exporting.printable(run,audit=True)
+    assert 'size:A4' in output and 'table-header-group' in output and '<details open>' in output
+    assert parsed.tags.count('table')>=2 and '<td>12.50</td>' in output
+    assert 'script' not in parsed.tags and '&lt;script&gt;' in output
+    assert output.index('核心判断')<output.index('证据附录')<output.index('交付说明')
+
+
+def test_raw_evidence_and_question_urls_cannot_execute_in_export(run):
+    run['evidence']=[{'id':'unsafe','title':'保留原始文字','locator':'合成位置',
+                     'quote':'<script>来源原文</script>', 'source_url':'javascript:alert(1)'}]
+    parsed=Parsed(exporting.printable(run))
+    assert not any(key=='href' and value.startswith('javascript:') for key,value in parsed.attrs)
+    assert '<script>来源原文</script>' in ''.join(parsed.text)
+
+
+def test_source_less_thesis_exports_with_explicit_evidence_gap(run):
+    run['memo']['theses']=[{'title':'待证实的论点','body':'尚需经营证据。','evidence_ids':[],
+                          'counter_evidence':'缺少反证检验。','invalidate_if':'取得新披露。'}]
+    for render in (exporting.markdown,exporting.printable):
+        assert '证据待补充' in render(run)
+        assert '核心投资论点' in render(run)
+
+
+def test_long_advice_reason_does_not_displace_position_actions_or_quote(run):
+    summary='长期盈利质量仍需要补充证据。'*120
+    run['memo']['investment_recommendation']=recommendation(summary=summary,market_snapshot={
+        'status':'available','price':'20','currency':'CNY','trade_date':'2026-10-15','source_id':'source-a'})
+    html=exporting.recommendation_html(run['memo'])
+    assert html.index('未持仓')<html.index('已有持仓')<html.index('参考收盘价')<html.index('建议理由')<html.index(summary)
+
+
+def test_advice_notice_uses_shared_source_freshness_and_frozen_source_gaps(run):
+    from app import questions
+    rec=recommendation(source_fingerprints={'source-a':'prior-fingerprint'},valuation_scenario_ids=[],valuation_basis=[])
+    run['memo'].update(investment_recommendation=rec,recommendation_sources=[],recommendation_source_gaps=['lost-source'])
+    reasons=questions.report_sync(run)['recommendation_freshness']['reasons']
+    assert any('来源已变化或失效' in reason for reason in reasons)
+    assert any('当时冻结的来源版本' in reason for reason in reasons)
+    for render in (exporting.markdown,exporting.printable):
+        output=render(run)
+        for reason in reasons:
+            assert (exporting._markdown_text(reason) if render==exporting.markdown else reason) in output
+        assert output.index('当时冻结的来源版本')<output.index('核心财务事实')
+
+
+def test_reading_price_rounding_retains_exact_frozen_value_and_raw_details(run):
+    precise='34.55639264160381512676832788'
+    rec=recommendation(market_snapshot={'status':'available','price':'28.2','currency':'CNY',
+        'trade_date':'2026-10-15','source_id':'source-a','decision_eligible':True},
+        price_comparisons=[{'scenario_id':'scenario-old','scenario_price':precise,'current_price':'28.2',
+            'upside_pct':'22.5404','currency':'CNY','trade_date':'2026-10-15','assumption_status':'user_scenario'}])
+    rec['valuation_basis'][0]['output']['price']=precise
+    run['memo']['investment_recommendation']=rec
+    original=deepcopy(run['memo'])
+    html=exporting.recommendation_html(run['memo'])
+    pricing=html.split('<div class="recommendation-pricing">')[1].split('<h3>建议理由')[0]
+    visible=''.join(Parsed(pricing).text)
+    assert '34.56' in visible and '28.20' in visible and '22.54' in visible
+    assert precise not in visible and '22.5404' not in visible
+    assert precise in html and run['memo']==original
