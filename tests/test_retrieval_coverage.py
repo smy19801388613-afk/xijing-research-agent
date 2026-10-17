@@ -223,7 +223,12 @@ def test_deep_followup_gather_respects_task_search_limit_and_retains_existing_bo
                         'status':'inference','counter_evidence':'尚缺独立证据','invalidate_if':'后续披露与当前材料冲突'}
                         for title in ('经营研究','现金研究')],
                      'sections':[{'key':key,'body':'根据已取得的原文分析，尚未形成确定判断',
-                                  'evidence_ids':[sid],'status':'inference'} for key in deep.SECTION_TITLES]}
+                                  'evidence_ids':[sid],'status':'inference'} for key in deep.SECTION_TITLES],
+                     'tracking_metrics':[{'id':'cash-followup','name':'现金回收','definition':'同口径经营现金流与应收回款',
+                         'thesis':'现金研究','baseline':{'status':'missing','value':'已有正文不足以确认财务基线','period':''},
+                         'frequency':'取得新增定期报告后','next_check':'下一次查阅财务披露时',
+                         'support_condition':'原始回款证据支持经营改善','invalidate_condition':'新增披露与当前判断冲突',
+                         'threshold_basis':'qualitative','next_action':'核查现金流附注','status':'needs_baseline'}]}
             return draft, {'model':'stub'}
         return {'issues':[],'requires_revision':False}, {'model':'stub'}
     monkeypatch.setattr(deep,'model_json',model)

@@ -56,7 +56,7 @@ def eligibility(source, run=None, as_of=None):
              'financial_fact' if financial else 'derived' if derived else 'body' if body else 'missing')
     can_cite = bool(has_record and not after and not failed)
     inference = can_cite and basis not in ('lead', 'missing', 'conflict') and not unusable
-    supported = bool(inference and not ocr and (published is not None or derived))
+    supported = bool(inference and not ocr and not source.get('inference_only') and (published is not None or derived))
     reasons = []
     if after: reasons.append('来源晚于研究截止日，不可用于本次历史研究')
     elif not published and not derived: reasons.append('来源日期未知，不能证明截止日内已知')
@@ -66,6 +66,7 @@ def eligibility(source, run=None, as_of=None):
     if failed or not has_record: reasons.append('尚未取得可引用的实际内容')
     if unusable: reasons.append('关联财务事实缺失或来源未确认')
     if derived: reasons.append('确定性计算或估值情景不是独立的原文证据')
+    if source.get('inference_only'): reasons.append('含未核验输入或探索假设，仅能支持条件推论')
     return {'schema_version': 1, 'basis': basis, 'readable_body': body,
             'can_cite': can_cite, 'supports_claim': supported,
             'supports_answer': supported and not derived, 'supports_inference': bool(inference),

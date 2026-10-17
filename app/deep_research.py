@@ -16,7 +16,7 @@ from .providers import model_json, ProviderError
 from .config import VERSION
 from .fact_state import verification, assert_claims, fact_view
 from .evidence_policy import eligibility
-from . import questions, execution_budget, report_evidence, research_draft, report_edit, review_state
+from . import questions, execution_budget, report_evidence, research_draft, report_edit, review_state, research_tracking
 from .report_state import valuation_snapshot, link_report_valuations, report_identity
 
 SECTION_TITLES = {
@@ -215,6 +215,8 @@ def reference_catalog(run):
         refs["valuation-" + v["id"]] = {"id": "valuation-" + v["id"], "kind": "valuation",
             "title": v["method_name"] + " · 用户假设情景", "url": None,
             "assumptions": v["assumptions"], "output": v["output"], "created_at": v.get("created_at")}
+    from . import research_extensions
+    refs.update(research_extensions.sources(run))
     return refs
 
 
@@ -223,7 +225,7 @@ def citable_source(ref, status, run=None):
     return policy['supports_claim'] if status=='supported' else policy['supports_inference']
 
 
-def validate_memo(candidate, run, allow_question_writes=True):
+def validate_memo(candidate, run, allow_question_writes=True, require_tracking=False, preserve_tracking_links=False):
     if not isinstance(candidate, dict):
         raise ValueError("报告必须是结构化对象")
     if not allow_question_writes:
@@ -288,9 +290,15 @@ def validate_memo(candidate, run, allow_question_writes=True):
         if not isinstance(candidate.get(field, []), list):
             raise ValueError("核实清单与限制应为列表")
         clean[field] = [text(v, 900) for v in candidate.get(field, [])[:12]]
-    used = list(dict.fromkeys(i for s in clean["sections"] + clean["theses"] for i in s["evidence_ids"]))
+    if 'tracking_metrics' in candidate or require_tracking:
+        clean['tracking_metrics'] = research_tracking.normalize_metrics(candidate.get('tracking_metrics'),
+            questions.catalog(run), run, clean['theses'], allow_existing_thesis=preserve_tracking_links)
+    used = list(dict.fromkeys([i for s in clean["sections"] + clean["theses"] for i in s["evidence_ids"]] +
+        [m['baseline']['source_id'] for m in clean.get('tracking_metrics', []) if m['baseline'].get('source_id')]))
+    # Exact evidence-row IDs can back a baseline even when not used in prose.
+    tracking_refs = questions.catalog(run) if clean.get('tracking_metrics') else {}
     # Source records are copied by the application, never trusted from model output.
-    clean["sources"] = [refs[i] for i in used]
+    clean["sources"] = [refs.get(i) or tracking_refs[i] for i in used]
     clean["limitations"] += ["结构化财务数据、原文披露与分析推断分别标记。接口来源不等于双源核验；网页搜索不能保证覆盖全部信息。",
         "没有披露日期的网页只能作为当前检索线索，不能证明历史截止日已知；公司宣传不等于独立验证。"]
     clean['limitations']=list(dict.fromkeys(clean['limitations']))
@@ -483,16 +491,18 @@ available_materials列明已取得并读过部分页面的文件，不代表全�
 资产负债表余额变化不能直接等同于现金流变化。合同负债等科目应区分期末余额、本期新增预收、退款和收入结转，缺少变动明细时只提出待验证解释；已取得余额不等于已证明其经营原因，也不能反过来说余额原文未取得。
 合并报表包含的金融子公司也可能影响经营性应收、应付及存款变动；没有分部桥接时，不能把合并营运资本变化直接归属于实体主营业务的回款，更不能写成已证实的核心业务恶化或改善。
 估值必须讨论方法适用性、驱动因素与对现有用户情景的挑战。已有valuation输出直接引用，不更改用户参数，不新增未经确认的目标价。不得编造行业常见倍数、可比公司PS、回报率或催化剂概率。缺市场价格/可比时说明无法判断相对便宜。可给定性熊/基准/牛条件和待确认输入，但不冒充已计算估值。
+敏感性包络必须检查输出字段和单位：equity_value_100m是股权总价值（亿元），enterprise_value_100m是企业总价值（亿元），只有price是每股价格（元/股）。绝不能把股价、收盘价或“市场价格”直接与总价值包络比较。只有明确先以股价乘总股数换算同单位总市值，或将股权总价值除以总股数得到每股价值后，才能比较；企业价值还需先扣除净债务等桥接为股权价值。仅取得价格和股本不等于已完成换算；未取得市值、股数或价格时，跟踪基线写待补，触发条件写取得数据并完成同单位换算后的条件，不声称已经便宜或昂贵。这条规则同样适用于tracking_metrics的definition、support_condition和invalidate_condition。
 带日期的历史市场PS TTM不能称当前市场PS，也不能直接与前瞻年度PS比倍数高低。单一收入增速不足以推出应有估值倍数，必须考虑稳态利润率、现金回收、资本成本和不同分母；资料不足仅说明尚无证据支持该情景，不宣称已证明昂贵。
 催化剂给可查证事件、时间窗口或下一次定期报告、实际验证动作。不要编造AI收入占比5%、合同增长20%等数值阈值；若确需提出额外观察标准，必须清楚标注“研究员建议的观察阈值，未获用户确认”，不能混入既有用户情景或披露指引。没有出现某个触发信号，并不能证明所有改善仅来自费用压缩。
 不要把未来“将查询/保存”当作已做。以具体尚未取得的材料形成下一步核实清单。避免三个指标和“进一步核实”的机械重复。篇幅由有用证据决定，主文约2200–3500中文字即可。
 同时返回question_answers数组，逐项引用research_questions中未归档的真实question_id，优先回答priority=high的缺口，不更新archived=true的问题。字段为answer、status（pending/partial/supported/conflict/unverifiable）、bindings:[{source_id,quote:实际原文连续摘录,relation:support/counter,reason:怎样回答此问题}]、counter_evidence、gaps:[缺口]、next_action。quote必须来自question_evidence_catalog或sources，不编造摘录；缺日期或只有摘要不能称supported。已有引用不证明完成，具体收费/分项收入/回款应分别处理。支持关系是模型判断，仍需人工复核。
 本次只更新最关键且取得进展的最多5项问题，其余问题记录由程序保留，不要为了全覆盖重复整份报告。每项answer约150—300字、绑定1—3条简短连续原文（每条约40—160字），不得拼接不同段落、改写数字或把省略号当作原文。问题状态不允许使用报告章节的inference/gap；不充分时用partial或unverifiable。示例：{question_id:"给定ID",answer:"当前判断",status:"partial",bindings:[],counter_evidence:"替代解释",gaps:["待取得资料"],next_action:"具体动作"}。
-sources与question_evidence_catalog是互补目录，相同ID只提供一次，不重复输出sources、全文、历史记录或输入元数据。仅按输出结构生成完整JSON；分析深度靠因果、证据与反证，不靠重复同一数字。
+同时返回 tracking_metrics 持续跟踪数组，通常 3—6 项，围绕本报告关键论点而非机械罗列所有指标。每项：{id:唯一英文短ID,name:指标名,definition:定义及会计/经营口径,thesis:逐字复制本报告某项theses.title,baseline:{status:observed或missing,value:原披露值及单位或具体缺失说明,period:基线期间,source_id:实际已读来源ID或null,quote:原文连续摘录或空字符串},frequency:更新频率,next_check:下一次披露或检查条件,support_condition:什么变化支持原论点,invalidate_condition:什么变化推翻原论点,threshold_basis:qualitative或unconfirmed_assumption,next_action:核查后采取的研究动作,status:monitoring或needs_baseline}。当前基线引用已读、日期有效、无冲突的正文或确定性计算记录；baseline.value只填摘录中的原数值与单位（例如“53,345,930千元”），年份和其他时间说明全部写入baseline.period（例如“FY2025”），不要把年份附在value后；不在此自行换算数字。缺数据写missing并说明待查材料，不能用零补缺。定性条件优先；包含数值的额外触发阈值一律是未获用户确认的研究假设，不能伪装成披露指引或已确认投资条件。更新频率表示研究计划，产品没有自动定时监控功能，不能声称已安排提醒。后续观察记录独立于已保存报告，不能宣称观察自动改变原论点或报告。
+sources与question_evidence_catalog是互补目录，相同ID只提供一次，不重复输出sources、全文、历史记录或输入元数据。仅按输出结构生成完整JSON；分析深度靠因果、证据与反证，不靠重复同一数字。research_extensions中已有的财务期间分析、估值范围与敏感性是程序计算结果；保留基数、期间和假设，缺失时明确缺口，不虚构已经建模。
 输出JSON：{question_answers:[上述对象],title,summary:核心结论与分歧,stance:研究立场及置信边界而非买卖评级,
 theses:[2到5个{title,body,evidence_ids:[实际给定ID],counter_evidence,invalidate_if,status:inference|supported|gap}],
 sections:[{key:business|industry|financial_quality|valuation|catalysts|risks|research_plan,body:有逻辑的完整分析可用Markdown,evidence_ids:[ID],status:inference|supported|gap}],
-questions:[具体可执行核实项],limitations:[实际证据缺口]}。
+tracking_metrics:[上述持续跟踪对象],questions:[具体可执行核实项],limitations:[实际证据缺口]}。
 sections中必须有7个独立对象，分别为 {key:business,...}、{key:industry,...}、{key:financial_quality,...}、{key:valuation,...}、{key:catalysts,...}、{key:risks,...}、{key:research_plan,...}。不要把|拼进key；不能将七章合成一个对象或字典。无证据部分status=gap，明确不作确定判断。summary仅概括带引用论点；不要自造来源ID或在正文写未经查阅链接。
 """
 
@@ -684,9 +694,10 @@ def build(run_id, question, chat=None, progress=None):
     source_context,question_sources=generation_evidence(run,focus=question)
     record('input_source_ids',[s['id'] for s in source_context+question_sources])
     report_valuation_snapshot = valuation_snapshot(run)
+    from . import research_extensions
     context = {"company": company, "ticker": ticker, "financial_year": req["year"], "as_of": cutoff,
         "question": question,"research_questions":question_context(run),"question_evidence_catalog":question_sources, "focus": plan.get("focus"), "facts": [fact_view(f,run) for f in run["facts"]], "calculations": run["calculations"],
-        "valuations": run.get("valuation_history", [])[-4:], "sources": source_context,"available_materials":material_inventory(refs),
+        "valuations": run.get("valuation_history", [])[-4:], "research_extensions": research_extensions.context(run), "sources": source_context,"available_materials":material_inventory(refs),
         "allowed_reference_ids": [s['id'] for s in source_context if citable_source(s, "inference",run)], "search_gaps": follow.get("gaps", []), "search_limitations": list(dict.fromkeys(limitations)),
         "conversation": [{"role": m["role"], "content": m["content"][:4500]} for m in chat.get("messages", [])[-12:]]}
     update("撰写业务、经营质量与估值分歧分析")
@@ -698,7 +709,7 @@ def build(run_id, question, chat=None, progress=None):
     record('review',review)
     validation_error = ""
     try:
-        memo = validate_memo(draft, run,allow_question_writes=allow_question_writes)
+        memo = validate_memo(draft, run,allow_question_writes=allow_question_writes,require_tracking=True)
     except ValueError as error:
         validation_error = str(error)
     if validation_error or review.get("requires_revision"):
@@ -718,6 +729,7 @@ def build(run_id, question, chat=None, progress=None):
         record('repair_input_source_ids',[s['id'] for s in context['sources']+context['question_evidence_catalog']])
         context['facts']=[fact_view(f,run) for f in run['facts']]
         context['calculations']=run['calculations']
+        context['research_extensions']=research_extensions.context(run)
         context['available_materials']=material_inventory(refs)
         context['allowed_reference_ids']=[s['id'] for s in context['sources'] if citable_source(s, "inference",run)]
         context['search_limitations']=list(dict.fromkeys(limitations))
@@ -725,7 +737,7 @@ def build(run_id, question, chat=None, progress=None):
         draft = call(MEMO_SYSTEM + "\n修订草稿，必须处理所有审阅问题并保留同一JSON结构。", {"context": context,
             "draft": draft, "review": review, "validation_error": validation_error}, 7800, reasoning=True)
         record('repaired_draft',draft)
-        memo = validate_memo(draft, run,allow_question_writes=allow_question_writes)
+        memo = validate_memo(draft, run,allow_question_writes=allow_question_writes,require_tracking=True)
     memo["review"] = {"issues": review.get("issues", []), "strengths": review.get("strengths", []),
         "revision_performed": bool(validation_error or review.get("requires_revision")),
         "citation_validation": "passed", "semantic_status": "模型审阅完成，关键判断仍需研究员复核"}
@@ -797,10 +809,11 @@ def refine(run_id, question, chat, progress=None):
         return value
     check()
     if progress: progress('根据已查阅的官方原文修订研究判断')
+    from . import research_extensions
     payload={'company':run['company'],'ticker':run['request']['ticker'],'as_of':run['request']['as_of'],
         'financial_year':run['request']['year'],'question':question,'research_questions':question_context(run),'question_evidence_catalog':question_sources,'sources':sources,'available_materials':material_inventory(refs),
         'allowed_reference_ids':[s['id'] for s in sources if citable_source(s, "inference",run)],'facts':run['facts'],'calculations':run['calculations'],
-        'valuations':run.get('valuation_history',[])[-4:],
+        'valuations':run.get('valuation_history',[])[-4:], 'research_extensions':research_extensions.context(run),
         'previous_report':{k:v for k,v in published.items() if k in report_edit.EDITORIAL_FIELDS},
         'prior_review_issues':(working['review'] if working else (run.get('memo') or {}).get('review',{})).get('issues',[])}
     system=MEMO_SYSTEM+'\n本次用已实际取得的资料修订，不重新搜索。此前报告可能因资料截断误称缺失；必须以本轮sources的原文为准，逐条消除与现有原文矛盾的缺口说明。审阅意见也可能出错，不能盲从要求将不同日期或分母的估值直接比较。不要声称开展了新检索。'
@@ -829,7 +842,9 @@ current_edit_values是本次允许修改的现有内容；previous_report仅用�
     def assemble(response):
         return report_edit.apply_patch(edit_base,response,edit_scope) if edit_scope.limited else response
     def validate(draft):
-        memo=validate_memo(draft,run,allow_question_writes=allow_question_writes)
+        memo=validate_memo(draft,run,allow_question_writes=allow_question_writes,
+                           require_tracking=bool(published.get('tracking_metrics')),
+                           preserve_tracking_links=edit_scope.limited)
         return report_edit.preserve_unauthorized(published,draft,memo,edit_scope) if edit_scope.limited else memo
     response=call(payload)
     draft=None

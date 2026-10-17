@@ -75,6 +75,14 @@ def requested_artifacts(text, rules=None):
         if reading and not re.search(r'不|别|无需|怎么|如何|是否|能否', clause[:reading.start()]):
             required.add('document_read')
     valuation = bool(re.search(r'估值|情景|倍数|\b(?:PE|PS|PB|DCF|DDM|EBITDA)\b', text, re.I))
+    for clause in re.split(r'[。；;\n]', text):
+        if re.search(r'不要|暂不|先不|不必|无需|如何|怎么|是否', clause): continue
+        if re.search(r'(?:计算|生成|保存|执行).{0,25}敏感性|敏感性.{0,15}(?:计算|生成|保存)', clause): required.add('sensitivity')
+        if re.search(r'(?:整理|保存|生成).{0,25}可比(?:公司|倍数|依据)', clause): required.add('comparables')
+        if re.search(r'(?:登记|保存).{0,15}财务期间', clause): required.add('financial_period_records')
+        elif re.search(r'分析.{0,15}财务期间', clause): required.add('financial_period_analysis')
+        if re.search(r'(?:拆分|计算).{0,15}(?:各季度|单季|季度同比|季度环比|扣非桥)', clause): required.add('financial_period_analysis')
+        if re.search(r'(?:保存|记录|追加).{0,12}(?:跟踪观察|观察记录)', clause): required.add('tracking_observation')
     if valuation and re.search(r'(?:整理|提出|生成|设计|给出).{0,30}(?:方案|参数)|方案卡片', text):
         if not re.search(r'不要.{0,8}(?:方案|卡片)|暂不.{0,8}(?:方案|卡片)', text):
             required.add('proposal')
@@ -85,7 +93,7 @@ def requested_artifacts(text, rules=None):
             if not re.search(r'不要|暂不|先不|不必|无需|别|如何|怎么|是否', prefix+report.group(0)[:3]) and not re.search(r'不(?:再|直接|自动|擅自)?\s*$', prefix):
                 required.add('report')
         calculation = re.search(r'重新计算|重算|计算并保存|实际计算|直接计算', clause)
-        if valuation and calculation and not re.search(r'不要|暂不|先不|不必|无需|别|不(?:再|直接|自动|擅自)?\s*$', clause[max(0, calculation.start()-8):calculation.start()]):
+        if valuation and calculation and not re.search(r'敏感性|可比', clause) and not re.search(r'不要|暂不|先不|不必|无需|别|不(?:再|直接|自动|擅自)?\s*$', clause[max(0, calculation.start()-8):calculation.start()]):
             required.add('valuation')
     if report_edit_requested(text) and re.search(r'报告|备忘录|refine_investment_memo', text):
         if re.search(r'保存新版本|保存新的一版|调用\s*refine_investment_memo|报告保存', text):
@@ -99,6 +107,10 @@ def permitted_artifacts(required, rules):
         return set()
     if rules.get('no_report'): result.discard('report')
     if rules.get('no_calculation') or rules.get('no_valuation'): result.discard('valuation')
+    if rules.get('no_calculation') or rules.get('no_valuation'): result.difference_update(('sensitivity','comparables'))
+    if rules.get('no_calculation'): result.difference_update(('financial_period_records','financial_period_analysis'))
+    if rules.get('no_material_writes'): result.discard('financial_period_records')
+    if rules.get('no_question_writes'): result.discard('tracking_observation')
     if rules.get('no_valuation'): result.discard('proposal')
     if rules.get('no_network') or rules.get('no_material_writes'): result.discard('document')
     if rules.get('no_pdf_read'):

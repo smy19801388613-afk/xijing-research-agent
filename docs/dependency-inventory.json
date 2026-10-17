@@ -1,0 +1,2776 @@
+{
+  "determinism": "No timestamp, absolute user paths, credentials, environment dump or network access. Same inputs and installed metadata produce identical files.",
+  "generator": "scripts/inventory_dependencies.py",
+  "input_sha256": {
+    "requirements-lock.txt": "b0bbf39a6d8d1f41b918b543254de5b40adbfecfea2739062559ba5e2a1717ca",
+    "requirements.txt": "7aa4f7368923b529372ee3341a5e0fb8e489a8cac2138d7da2009b3c2d083fb3",
+    "web/package-lock.json": "905d242e6a47351cb02c2176545c71407e86afe23ca993b55f7989363e17b20a",
+    "web/package.json": "aa5857fc19305a65e9a3e7619ca3171a10494de2b7443cb9bc7e21d0660e7a6e"
+  },
+  "npm_packages": [
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "0.151.0",
+      "integrity": "sha512-J1yXrIlNDZVzE3ada310xeAw7nH8yCAyLPuUIsjKatFPmfn5bS1oW+cM+QsGOtVWd5nhSpbwZWx/rue+r5Z+PA==",
+      "license_files": [
+        {
+          "bytes": 1119,
+          "leading_text_excerpt": "MIT License / Copyright (c) 2024-present VoidZero Inc. & Contributors / Copyright (c) 2023 Boshen / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / i",
+          "path": "LICENSE",
+          "sha256": "95ced5ecf1133fbf41d409b5555c86c344f83f3b019926057ddbc07cfdcc27b3",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@oxc-project/types",
+      "locked_version": "0.151.0",
+      "name": "@oxc-project/types",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://oxc.rs",
+        "Repository": "https://github.com/oxc-project/oxc.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/@oxc-project/types/-/types-0.151.0.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [
+        "arm"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-A5kXfGKvKWWZE0TtPrfsvT+q4Y5d1QG8gGUzpYjGydM+fARM9MuX90PrXYXe0XbsDVgyxxNzHo6giCj90bsFNw==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-android-arm-eabi",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-android-arm-eabi",
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-android-arm-eabi/-/binding-android-arm-eabi-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-z6cTycz+iJ4PVkuL4HHW4DfTfoeU/2nqYYuSOrTmH7yHK5Y0LCOnA03V4ZNxavyVaU1oOqUgIg2klN/s+USGOA==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-android-arm64",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-android-arm64",
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-android-arm64/-/binding-android-arm64-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-jShvqNtP6vDC6/A5JOAzbVV+DkgHqhl/ScVCJEbt+TUY6QYz7YnXcrg3sLtFBniro0f/Ld50ZwCWA6f7KYD1nQ==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-darwin-arm64",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-darwin-arm64",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-darwin-arm64/-/binding-darwin-arm64-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-f2i2xiNWq1Z1l2++q2fuhZRdLAT3aqxD6vRNm1RAxpUoBcdqNB3C0s1Bt+K+PbEx2F5F4gQp6hqKkphCY/xF9w==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-darwin-x64",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-darwin-x64",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-darwin-x64/-/binding-darwin-x64-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-4Ir5FSOKIAMr4r0kExpt1s3bMgzJU3rA45AYOHtQpls0oNeqcYBKrWMlckrYH4KCfGLfkfn1tN1dmZPMVsdXow==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-freebsd-x64",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-freebsd-x64",
+      "optional": true,
+      "os": [
+        "freebsd"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-freebsd-x64/-/binding-freebsd-x64-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-/gnRDM+39BROzAN/k1OZjDPnDMcZxB/0EUxKjONO5yVkNEvlsoMDrxGNKgZi/ttFriS2gwlDNzB65pvNbFOXIQ==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-linux-arm-gnueabihf",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-linux-arm-gnueabihf",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-linux-arm-gnueabihf/-/binding-linux-arm-gnueabihf-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-PFaK8HwvAHbaKbBcDNQihjMKYvFnA5hiENx/l5tphTDz1E0WFp32l0A7aq7lyUwGsRw/xSrNIy/gIK4thrSCrw==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-linux-arm64-gnu",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-linux-arm64-gnu",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-gnu/-/binding-linux-arm64-gnu-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-AskzJUIKRLPxkruR1wLKewGbOw+EYfU/9lOrBFj4AFrEA8hPpKFnODWNu2WLaNs0QNkEb9QIJufmVZZIL/bJlg==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-linux-arm64-musl",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-linux-arm64-musl",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-linux-arm64-musl/-/binding-linux-arm64-musl-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "ppc64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-qlUGAheh2yh8afH7QBgx0PrRHN85hKnNd78x8MeMhXivuevgd8vgf6/CstOzmNKY/lLTHvNTrPy98cLnAugzJw==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-linux-ppc64-gnu",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-linux-ppc64-gnu",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-linux-ppc64-gnu/-/binding-linux-ppc64-gnu-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "s390x"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-secpEad+0vCbSfn8upFySkDskv+bGPk3THSDS9Y89yc4rb4kzqHp8Dmyd9BkQW4SnhNXBZCl/6CrO//hZahNJQ==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-linux-s390x-gnu",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-linux-s390x-gnu",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-linux-s390x-gnu/-/binding-linux-s390x-gnu-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-mOVBT3dPpkWm8XBWPmU4bf+U6dYDLeMo/9ojUmis4N0L5uu10qra5vOyngZ7/PSdoE4G9KvRt4bloRxNjLas7A==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-linux-x64-gnu",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-linux-x64-gnu",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-linux-x64-gnu/-/binding-linux-x64-gnu-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-Is78i9A8Ui4SqcxUwFJ9uMmjDn58IbVTjFWYdQestFEgeuEmHMLGNriXnVJKkwG2YiZjw8cP0zCTyDMdDGtOOg==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-linux-x64-musl",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-linux-x64-musl",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-linux-x64-musl/-/binding-linux-x64-musl-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-dUCXneZ87INUMyQ0D+C0HrEBNUPNXHaPmU5GTjyKTJEiussw9Kaj5Ln8UztPe4epV/ffvgNBEadksdYhmW6xJA==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-openharmony-arm64",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-openharmony-arm64",
+      "optional": true,
+      "os": [
+        "openharmony"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-openharmony-arm64/-/binding-openharmony-arm64-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-jByxb6qfd+bH1xUd0qnfFnb17i9sWBPY2tOavJ0l3tdr3OTu+Kvtm8cd/JV5nFt657b1VqGltxg9olOEfofXWw==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-win32-arm64-msvc",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-win32-arm64-msvc",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-win32-arm64-msvc/-/binding-win32-arm64-msvc-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "1.2.11",
+      "integrity": "sha512-/PzKqzAJ03i19oy2ItPvyvaVjOjBCNnfaJs8yvUdGBKmiESgnrJSQ2awd81QzFbbnAmu7YO9ZnJrDCb9VSJPRA==",
+      "license_files": [],
+      "limitations": [
+        "No local license/notice text inspected for this package."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/binding-win32-x64-msvc",
+      "locked_version": "1.2.11",
+      "name": "@rolldown/binding-win32-x64-msvc",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "project_urls": {
+        "Homepage": "https://rolldown.rs/",
+        "Repository": "https://github.com/rolldown/rolldown.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/binding-win32-x64-msvc/-/binding-win32-x64-msvc-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "1.0.1",
+      "integrity": "sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==",
+      "license_files": [
+        {
+          "bytes": 1106,
+          "leading_text_excerpt": "MIT License / Copyright (c) 2026-present, rolldown/plugins repository contributors / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software ",
+          "path": "LICENSE",
+          "sha256": "e1919b3b98b8bf6c1b99fcc60a0ed46027c97ac947432e1278446c9606f50161",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@rolldown/pluginutils",
+      "locked_version": "1.0.1",
+      "name": "@rolldown/pluginutils",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://github.com/rolldown/plugins/tree/main/packages/pluginutils",
+        "Repository": "https://github.com/rolldown/plugins.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/@rolldown/pluginutils/-/pluginutils-1.0.1.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "19.3.0",
+      "integrity": "sha512-N0rFCuH9YoxG9/m61l9MfpJKfmLOVU0em7ipIz6TRgSSkvReLB9vL85GB+yr8Bs5leqpvg96JSwF4ZS1s4viQg==",
+      "license_files": [
+        {
+          "bytes": 1141,
+          "leading_text_excerpt": "MIT License / Copyright (c) Microsoft Corporation. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, including w",
+          "path": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@types/react",
+      "locked_version": "19.3.0",
+      "name": "@types/react",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react",
+        "Repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/@types/react/-/react-19.3.0.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "19.3.0",
+      "integrity": "sha512-ZI7bU42mZXXKHn/qNLEw2IrbiINU7X5+vfgdixBHkCNpYWXjKgfQ/P+uyGb5CjOLB9UcnTeg3rylQtV2hym44Q==",
+      "license_files": [
+        {
+          "bytes": 1141,
+          "leading_text_excerpt": "MIT License / Copyright (c) Microsoft Corporation. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, including w",
+          "path": "LICENSE",
+          "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@types/react-dom",
+      "locked_version": "19.3.0",
+      "name": "@types/react-dom",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://github.com/DefinitelyTyped/DefinitelyTyped/tree/master/types/react-dom",
+        "Repository": "https://github.com/DefinitelyTyped/DefinitelyTyped.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.3.0.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "6.1.1",
+      "integrity": "sha512-yxLaQV9gkhS8ezJqCM6+ndU7mDY6gqAg75NQ+0IjwEI8IYOmQCgkRwHKVSfWXW076DsqMo0Dk+0FK1U+M5RgFw==",
+      "license_files": [
+        {
+          "bytes": 1103,
+          "leading_text_excerpt": "MIT License / Copyright (c) 2019-present, Yuxi (Evan) You and Vite contributors / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software wit",
+          "path": "LICENSE",
+          "sha256": "29b68325fe026047d13e187b44c33b2acacf7dc647dec4583702e59f235e13b5",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/@vitejs/plugin-react",
+      "locked_version": "6.1.1",
+      "name": "@vitejs/plugin-react",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://github.com/vitejs/vite-plugin-react/tree/main/packages/plugin-react",
+        "Repository": "https://github.com/vitejs/vite-plugin-react.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/@vitejs/plugin-react/-/plugin-react-6.1.1.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "3.2.3",
+      "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ==",
+      "license_files": [
+        {
+          "bytes": 1062,
+          "leading_text_excerpt": "Copyright (c) 2017-2018 Fredrik Nicol / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, including without limita",
+          "path": "LICENSE",
+          "sha256": "11d55bd4541c75ee7879547ac49089c489163dae49551389713c3d026cab383e",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/csstype",
+      "locked_version": "3.2.3",
+      "name": "csstype",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Repository": "https://github.com/frenic/csstype"
+      },
+      "registry_tarball": "https://registry.npmjs.org/csstype/-/csstype-3.2.3.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "Apache-2.0",
+      "installed_matches_lock": true,
+      "installed_version": "2.1.2",
+      "integrity": "sha512-Btj2BOOO83o3WyH59e8MgXsxEQVcarkUOpEYrubB0urwnN10yQ364rsiByU11nZlqWYZm05i/of7io4mzihBtQ==",
+      "license_files": [
+        {
+          "bytes": 11357,
+          "leading_text_excerpt": "Apache License / Version 2.0, January 2004 / http://www.apache.org/licenses/ / TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION / 1. Definitions. / \"License\" shall mean the terms and conditions for use, reproduction, / and distribution as defined b",
+          "path": "LICENSE",
+          "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "Apache-2.0",
+      "lock_path": "node_modules/detect-libc",
+      "locked_version": "2.1.2",
+      "name": "detect-libc",
+      "optional": false,
+      "os": [],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/detect-libc/-/detect-libc-2.1.2.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "6.5.0",
+      "integrity": "sha512-tIbYtZbucOs0BRGqPJkshJUYdL+SDH7dVM8gjy+ERp3WAUjLEFJE+02kanyHtwjWOnwrKYBiwAmM0p4kLJAnXg==",
+      "license_files": [
+        {
+          "bytes": 1053,
+          "leading_text_excerpt": "Copyright 2023 Abdullah Atta / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the righ",
+          "path": "LICENSE",
+          "sha256": "9a39f2aadab11a3697edd668ff2d8ad885b649737b7ab4d3bf12b34e5ada0c86",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/fdir",
+      "locked_version": "6.5.0",
+      "name": "fdir",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://github.com/thecodrr/fdir",
+        "Repository": "https://github.com/thecodrr/fdir.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/fdir/-/fdir-6.5.0.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-5xoDfX+fL7faATnagmWPpbFtwh/R77WmMMqqHGS65C3vvB0YHrgF+B1YmZ3441tMj5n63k0212XNoJwzlhffQw==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/fsevents",
+      "locked_version": "2.3.3",
+      "name": "fsevents",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/fsevents/-/fsevents-2.3.3.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MPL-2.0",
+      "installed_matches_lock": true,
+      "installed_version": "1.33.0",
+      "integrity": "sha512-WkUDrojuJs0xkgGf2udWxa3yGBRxPtxUkB79i6aCZLRgc7PM8fZe9TosfPDcvEpQZbuFASnHYmRLBLUbmLOIIA==",
+      "license_files": [
+        {
+          "bytes": 15648,
+          "leading_text_excerpt": "Mozilla Public License Version 2.0 / ================================== / 1. Definitions / -------------- / 1.1. \"Contributor\" / means each individual or legal entity that creates, contributes to / the creation of, or owns Covered Software. / 1.2. \"Contributor",
+          "path": "LICENSE",
+          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss",
+      "locked_version": "1.33.0",
+      "name": "lightningcss",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Repository": "https://github.com/parcel-bundler/lightningcss.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-gEpRTalKdosp4Bb8qWtc2iOgE5SeIHlpS1up9bFq2wAyYhl1UdTObYiHe98zEM9SQvSoqQZ1IQD0JNpg3Ml5pg==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-android-arm64",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-android-arm64",
+      "optional": true,
+      "os": [
+        "android"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-android-arm64/-/lightningcss-android-arm64-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-Sciaz8eenNTKn9b3t7+xr0ipTp9YxKQY4npwQ3mrRuL0BAVHBLyZxofhaKBAVtzmtRZ/zTyo0/to4B1uWG/Djg==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-darwin-arm64",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-darwin-arm64",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-darwin-arm64/-/lightningcss-darwin-arm64-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-Z5UPAxzrjlWNNyGy6i65cJzzvgJ5D3T6wMvs+gWpY9d7qRhANrxqAp6LhxIgZhWEw18RfJTGcRxjuLIBr+m8XQ==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-darwin-x64",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-darwin-x64",
+      "optional": true,
+      "os": [
+        "darwin"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-darwin-x64/-/lightningcss-darwin-x64-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-QQM/Ti/hQajJwCY+RiWuCZ9sdtI/XQk7nDK5vC8kkdwixezOlDgvDx7+RT+QjK6FcFT4MpsuoBnHIo/O3StRRg==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-freebsd-x64",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-freebsd-x64",
+      "optional": true,
+      "os": [
+        "freebsd"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-freebsd-x64/-/lightningcss-freebsd-x64-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-N7FVBe6iS24MlM6R/4RBTxGhQheZGs7tiQ9U32UtF75NzP5Q7xWPRqLBCKxlRQRk3rY1jCIPLzx7WzOhuUIRLQ==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-linux-arm-gnueabihf",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-linux-arm-gnueabihf",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-linux-arm-gnueabihf/-/lightningcss-linux-arm-gnueabihf-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-j2v/itmy4HlNxlc6voKXYgBqNi0Ng2LShg4z7GufpEgs05P+2suBVyi9I6YHq5uoVFx9ETin3eCEhLVyXGQnKg==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-linux-arm64-gnu",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-linux-arm64-gnu",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-linux-arm64-gnu/-/lightningcss-linux-arm64-gnu-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-yiO5ROMuYQgXbC60yjZU5CYSFZGKXL0HFATXt9mHJn1+zW55oCtMI9NfcVhYLMFDL7gV7oBPon/EmMMGg2OvtQ==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-linux-arm64-musl",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-linux-arm64-musl",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-linux-arm64-musl/-/lightningcss-linux-arm64-musl-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-ar+Ju7LmcN0Jo4FpL4hpFybwNG9/3A/Br5KW2n2jyODg3MEZXaDYADdemoNS+BDNfMgKvylJLj4S5tyRActuAg==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-linux-x64-gnu",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-linux-x64-gnu",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-linux-x64-gnu/-/lightningcss-linux-x64-gnu-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-RYiYbkokw0trfKqqzfF55lginwEPrD3OJDfTuJzFs1MK6iFnDenaz1fqLLtX4ITG3OktJQXOeTaw1awrBAlZPw==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-linux-x64-musl",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-linux-x64-musl",
+      "optional": true,
+      "os": [
+        "linux"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-linux-x64-musl/-/lightningcss-linux-x64-musl-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "arm64"
+      ],
+      "direct": false,
+      "installed_license": null,
+      "installed_matches_lock": false,
+      "installed_version": null,
+      "integrity": "sha512-1K+MPfLSFVpphzpdbfkhlWk6wBrTObBzS2T6db10PNOZgR9GoVsAWzwNyuhUYYbTp23j+4RrncfujZ4uAzXvwA==",
+      "license_files": [],
+      "limitations": [
+        "Local package absent; lock metadata only. Optional OS/CPU variants may intentionally be absent.",
+        "No local license/notice text inspected for this package.",
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-win32-arm64-msvc",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-win32-arm64-msvc",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-win32-arm64-msvc/-/lightningcss-win32-arm64-msvc-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "not_installed"
+    },
+    {
+      "cpu": [
+        "x64"
+      ],
+      "direct": false,
+      "installed_license": "MPL-2.0",
+      "installed_matches_lock": true,
+      "installed_version": "1.33.0",
+      "integrity": "sha512-OlEICDx/Xl0FqSp4bry8zFnCvGpig3Gl4gCquvYwHuqJKEC1+n9NgDniFvqHGmMv1ZkqDJrDqKKSykTDX+ehuA==",
+      "license_files": [
+        {
+          "bytes": 15648,
+          "leading_text_excerpt": "Mozilla Public License Version 2.0 / ================================== / 1. Definitions / -------------- / 1.1. \"Contributor\" / means each individual or legal entity that creates, contributes to / the creation of, or owns Covered Software. / 1.2. \"Contributor",
+          "path": "LICENSE",
+          "sha256": "5eba353fe5076ac3432177f8ab1cf75e3afcd0584251e37c3bfead5f447d040e",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MPL-2.0",
+      "lock_path": "node_modules/lightningcss-win32-x64-msvc",
+      "locked_version": "1.33.0",
+      "name": "lightningcss-win32-x64-msvc",
+      "optional": true,
+      "os": [
+        "win32"
+      ],
+      "project_urls": {
+        "Repository": "https://github.com/parcel-bundler/lightningcss.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/lightningcss-win32-x64-msvc/-/lightningcss-win32-x64-msvc-1.33.0.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "ISC",
+      "installed_matches_lock": true,
+      "installed_version": "0.468.0",
+      "integrity": "sha512-6koYRhnM2N0GGZIdXzSeiNwguv1gt/FAjZOiPl76roBi3xKEXa4WmfpxgQwTTL4KipXjefrnf3oV4IsYhi4JFA==",
+      "license_files": [
+        {
+          "bytes": 880,
+          "leading_text_excerpt": "ISC License / Copyright (c) for portions of Lucide are held by Cole Bemis 2013-2022 as part of Feather (MIT). All other copyright (c) for Lucide are held by Lucide Contributors 2022. / Permission to use, copy, modify, and/or distribute this software for any / ",
+          "path": "LICENSE",
+          "sha256": "1e7290b35280a048667bbf0ebabac1c7fd52a75300e8b2946ac165715997f2bc",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "ISC",
+      "lock_path": "node_modules/lucide-react",
+      "locked_version": "0.468.0",
+      "name": "lucide-react",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://lucide.dev",
+        "Repository": "https://github.com/lucide-icons/lucide.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/lucide-react/-/lucide-react-0.468.0.tgz",
+      "role": "runtime",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "3.3.19",
+      "integrity": "sha512-Y2tUNy4ouw6tq5oDSKeQYGOyhkUBhNOcGV/02KC+6kd9eDGqdZd++mjMiIDilrBYvjEnCYvVtsuHCuP+okSfug==",
+      "license_files": [
+        {
+          "bytes": 1095,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright 2017 Andrey Sitnik <andrey@sitnik.ru> / Permission is hereby granted, free of charge, to any person obtaining a copy of / this software and associated documentation files (the \"Software\"), to deal in / the Software without res",
+          "path": "LICENSE",
+          "sha256": "da4db1480d9beea3483a2eda5c53b22238d0827d57da162b48f122e04d2d9987",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/nanoid",
+      "locked_version": "3.3.19",
+      "name": "nanoid",
+      "optional": false,
+      "os": [],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/nanoid/-/nanoid-3.3.19.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "ISC",
+      "installed_matches_lock": true,
+      "installed_version": "1.1.1",
+      "integrity": "sha512-xceH2snhtb5M9liqDsmEw56le376mTZkEX/jEb/RxNFyegNul7eNslCXP9FDj/Lcu0X8KEyMceP2ntpaHrDEVA==",
+      "license_files": [
+        {
+          "bytes": 787,
+          "leading_text_excerpt": "ISC License / Copyright (c) 2021-2024 Oleksii Raspopov, Kostiantyn Denysov, Anton Verinov / Permission to use, copy, modify, and/or distribute this software for any / purpose with or without fee is hereby granted, provided that the above / copyright notice and",
+          "path": "LICENSE",
+          "sha256": "6582629e2979466878f6014313dcc2f3756c9616148682227ce3063dde310750",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "Project repository URL unknown; registry tarball is a distribution source, not a repository assertion."
+      ],
+      "lock_license": "ISC",
+      "lock_path": "node_modules/picocolors",
+      "locked_version": "1.1.1",
+      "name": "picocolors",
+      "optional": false,
+      "os": [],
+      "project_urls": {},
+      "registry_tarball": "https://registry.npmjs.org/picocolors/-/picocolors-1.1.1.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "4.0.7",
+      "integrity": "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==",
+      "license_files": [
+        {
+          "bytes": 1091,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2017-present, Jon Schlinkert. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restric",
+          "path": "LICENSE",
+          "sha256": "d0cd141b0c322fded5dfad1d4645bb2fedfc05b7321fe1009469638190d59ef9",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/picomatch",
+      "locked_version": "4.0.7",
+      "name": "picomatch",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://github.com/micromatch/picomatch"
+      },
+      "registry_tarball": "https://registry.npmjs.org/picomatch/-/picomatch-4.0.7.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "8.5.28",
+      "integrity": "sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==",
+      "license_files": [
+        {
+          "bytes": 1095,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright 2013 Andrey Sitnik <andrey@sitnik.es> / Permission is hereby granted, free of charge, to any person obtaining a copy of / this software and associated documentation files (the \"Software\"), to deal in / the Software without res",
+          "path": "LICENSE",
+          "sha256": "5be1f3465bba68a626777f984878814aaf35e7ef8e9fd314d469bcf887050fb8",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/postcss",
+      "locked_version": "8.5.28",
+      "name": "postcss",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://postcss.org/"
+      },
+      "registry_tarball": "https://registry.npmjs.org/postcss/-/postcss-8.5.28.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "19.3.0",
+      "integrity": "sha512-E8LUcbtBWt20bbl2YoHfx4ZDBdxVTfOKtCZn9cDSJ4l6/nuoApcpIBcj47t2wZoVX8g2ZHuMHbiShgCR1T5Sog==",
+      "license_files": [
+        {
+          "bytes": 1088,
+          "leading_text_excerpt": "MIT License / Copyright (c) Meta Platforms, Inc. and affiliates. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restrictio",
+          "path": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/react",
+      "locked_version": "19.3.0",
+      "name": "react",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://react.dev/",
+        "Repository": "https://github.com/react/react.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/react/-/react-19.3.0.tgz",
+      "role": "runtime",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "19.3.0",
+      "integrity": "sha512-JDk8dgif51OjFoDE70+OT9ICyYr+69HlmihNwp1+Nsfbna3t5sIiCa9ZJktDmQ4/1b/rn26hIAR2uYXDMr5r0Q==",
+      "license_files": [
+        {
+          "bytes": 1088,
+          "leading_text_excerpt": "MIT License / Copyright (c) Meta Platforms, Inc. and affiliates. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restrictio",
+          "path": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/react-dom",
+      "locked_version": "19.3.0",
+      "name": "react-dom",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://react.dev/",
+        "Repository": "https://github.com/react/react.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/react-dom/-/react-dom-19.3.0.tgz",
+      "role": "runtime",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "1.2.11",
+      "integrity": "sha512-qpSwIyz0jHQq5qXBTNxFmE6664rJ7O+4TvPFOiOaBSrz8IOHc1koKKSqTM2H6u1UG1+TveuC6vaDHKXFOvb1Kw==",
+      "license_files": [
+        {
+          "bytes": 1302,
+          "leading_text_excerpt": "MIT License / Copyright (c) 2024-present VoidZero Inc. & Contributors / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restr",
+          "path": "LICENSE",
+          "sha256": "23ecfff35a5a2e80d92142f75228912c3b1abc4b5a8337a821ff4397e2f9f734",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 2209,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2017 [these people](https://github.com/rollup/rollup/graphs/contributors) / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"),",
+          "path": "THIRD-PARTY-LICENSE",
+          "sha256": "a877291d800ed43692f3f9ae09d8e01cc6f7293ad39d43896059c188ffbb8b7c",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/rolldown",
+      "locked_version": "1.2.11",
+      "name": "rolldown",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://rolldown.rs/",
+        "Repository": "https://github.com/rolldown/rolldown.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/rolldown/-/rolldown-1.2.11.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "0.28.0",
+      "integrity": "sha512-juorfCmIkIw8tT+p5BXSm6PJjQF/ycEYmKyzURCIt/RaZIhL+PulbQ9Yu2z1HdOJDdqDTlxA1+xKBmHXJsczAw==",
+      "license_files": [
+        {
+          "bytes": 1088,
+          "leading_text_excerpt": "MIT License / Copyright (c) Meta Platforms, Inc. and affiliates. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restrictio",
+          "path": "LICENSE",
+          "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/scheduler",
+      "locked_version": "0.28.0",
+      "name": "scheduler",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://react.dev/",
+        "Repository": "https://github.com/react/react.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/scheduler/-/scheduler-0.28.0.tgz",
+      "role": "runtime",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "BSD-3-Clause",
+      "installed_matches_lock": true,
+      "installed_version": "1.2.1",
+      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
+      "license_files": [
+        {
+          "bytes": 1526,
+          "leading_text_excerpt": "Copyright (c) 2009-2011, Mozilla Foundation and contributors / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are met: / * Redistributions of source",
+          "path": "LICENSE",
+          "sha256": "6cb0631f71c7749763fd3dd1d5bee52dd1070ec17f2edc1710079ad070bd2fbd",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "BSD-3-Clause",
+      "lock_path": "node_modules/source-map-js",
+      "locked_version": "1.2.1",
+      "name": "source-map-js",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://github.com/7rulnik/source-map-js"
+      },
+      "registry_tarball": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": false,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "0.2.17",
+      "integrity": "sha512-wXR/dYpcqKmfWpEdZjiKJOwCNFndD0DMnrW/cYjVGttEkBfVgcLFHoNrlj47mjOVic9yyNu65alsgF4NQyTa2g==",
+      "license_files": [
+        {
+          "bytes": 1076,
+          "leading_text_excerpt": "MIT License / Copyright (c) 2024 Madeline Gurriarán / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, including ",
+          "path": "LICENSE",
+          "sha256": "22c68811e174cbbfb3813d4135918df4f540959c14d872e601d9abe83d3cde8f",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/tinyglobby",
+      "locked_version": "0.2.17",
+      "name": "tinyglobby",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://superchupu.dev/tinyglobby",
+        "Repository": "https://github.com/SuperchupuDev/tinyglobby.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/tinyglobby/-/tinyglobby-0.2.17.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "Apache-2.0",
+      "installed_matches_lock": true,
+      "installed_version": "5.8.3",
+      "integrity": "sha512-p1diW6TqL9L07nNxvRMM7hMMw4c5XOo/1ibL4aAIGmSAt9slTE1Xgw5KWuof2uTOvCg9BY7ZRi+GaF+7sfgPeQ==",
+      "license_files": [
+        {
+          "bytes": 9197,
+          "leading_text_excerpt": "Apache License / Version 2.0, January 2004 / http://www.apache.org/licenses/ / TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION / 1. Definitions. / \"License\" shall mean the terms and conditions for use, reproduction, and distribution as defined by ",
+          "path": "LICENSE.txt",
+          "sha256": "a7d00bfd54525bc694b6e32f64c7ebcf5e6b7ae3657be5cc12767bce74654a47",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 37824,
+          "leading_text_excerpt": "/*!----------------- TypeScript ThirdPartyNotices ------------------------------------------------------- / The TypeScript software incorporates third party material from the projects listed below. The original copyright notice and the license under which Micr",
+          "path": "ThirdPartyNoticeText.txt",
+          "sha256": "1af3c68039c57e539422da82a4faada506ce6d0ea6f90e0b699d02dbcdb7a90c",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "Apache-2.0",
+      "lock_path": "node_modules/typescript",
+      "locked_version": "5.8.3",
+      "name": "typescript",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://www.typescriptlang.org/",
+        "Repository": "https://github.com/microsoft/TypeScript.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/typescript/-/typescript-5.8.3.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    },
+    {
+      "cpu": [],
+      "direct": true,
+      "installed_license": "MIT",
+      "installed_matches_lock": true,
+      "installed_version": "8.3.1",
+      "integrity": "sha512-/bvH9E9tmCXRGp2uXY3WbOldqpTwFkbha/8ANaEQ6VkxhH60KyqLwgZq6lG2y+4uT55x9+9eUHMpQ7uGnOCKjA==",
+      "license_files": [
+        {
+          "bytes": 112425,
+          "leading_text_excerpt": "# Vite core license / Vite is released under the MIT license: / MIT License / Copyright (c) 2019-present, VoidZero Inc. and Vite contributors / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated docum",
+          "path": "LICENSE.md",
+          "sha256": "387dd7baa307083401a27c58c362c30832f5ba1dba84f10cc22c33401523f45c",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "lock_license": "MIT",
+      "lock_path": "node_modules/vite",
+      "locked_version": "8.3.1",
+      "name": "vite",
+      "optional": false,
+      "os": [],
+      "project_urls": {
+        "Homepage": "https://vite.dev",
+        "Repository": "https://github.com/vitejs/vite.git"
+      },
+      "registry_tarball": "https://registry.npmjs.org/vite/-/vite-8.3.1.tgz",
+      "role": "build_or_test",
+      "status": "matched"
+    }
+  ],
+  "python_packages": [
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "0.0.5",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1086,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2025 Sebastián Ramírez / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, i",
+          "path": "annotated_doc-0.0.5.dist-info/licenses/LICENSE",
+          "sha256": "fff170779a6acbf65abdb405c087f1cee1786691e4a96a4034517e4a504a0cdf",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "0.0.5",
+      "metadata_source": "local installed distribution",
+      "name": "annotated-doc",
+      "project_urls": {
+        "Changelog": "https://github.com/fastapi/annotated-doc/release-notes.md",
+        "Documentation": "https://github.com/fastapi/annotated-doc",
+        "Homepage": "https://github.com/fastapi/annotated-doc",
+        "Issues": "https://github.com/fastapi/annotated-doc/issues",
+        "Repository": "https://github.com/fastapi/annotated-doc"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "0.8.0",
+      "license_classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1083,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2022 the contributors / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, in",
+          "path": "annotated_types-0.8.0.dist-info/licenses/LICENSE",
+          "sha256": "fe1049884b1a0d9342901e88e07f32925d24b3121d9972b6a6805fb9824b095d",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "0.8.0",
+      "metadata_source": "local installed distribution",
+      "name": "annotated-types",
+      "project_urls": {
+        "Changelog": "https://github.com/annotated-types/annotated-types/releases",
+        "Homepage": "https://github.com/annotated-types/annotated-types",
+        "Source": "https://github.com/annotated-types/annotated-types"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "4.15.1",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1081,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2018 Alex Grönholm / Permission is hereby granted, free of charge, to any person obtaining a copy of / this software and associated documentation files (the \"Software\"), to deal in / the Software without restriction, inclu",
+          "path": "anyio-4.15.1.dist-info/licenses/LICENSE",
+          "sha256": "5361ac9dc58f2ef5fd2e9b09c68297c17f04950909bbc8023bdb82eacf22c2b0",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "4.15.1",
+      "metadata_source": "local installed distribution",
+      "name": "anyio",
+      "project_urls": {
+        "Changelog": "https://anyio.readthedocs.io/en/stable/versionhistory.html",
+        "Documentation": "https://anyio.readthedocs.io/en/latest/",
+        "Issue tracker": "https://github.com/agronholm/anyio/issues",
+        "Source code": "https://github.com/agronholm/anyio"
+      },
+      "requires_dist": [
+        "exceptiongroup>=1.0.2; python_version < \"3.11\"",
+        "idna>=2.8",
+        "trio>=0.32.0; extra == \"trio\"",
+        "typing_extensions>=4.16.0; python_version < \"3.15\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "2026.7.22",
+      "license_classifiers": [
+        "License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)"
+      ],
+      "license_declared": "MPL-2.0",
+      "license_declared_sha256": "09962c1dc23fac80a0e5a88b2eb7051b74a6443a568ca2a045a4ec2fb82aeee5",
+      "license_declared_truncated": false,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 989,
+          "leading_text_excerpt": "This package contains a modified version of ca-bundle.crt: / ca-bundle.crt -- Bundle of CA Root Certificates / This is a bundle of X.509 certificates of public Certificate Authorities / (CA). These were automatically extracted from Mozilla's root certificates ",
+          "path": "certifi-2026.7.22.dist-info/licenses/LICENSE",
+          "sha256": "e93716da6b9c0d5a4a1df60fe695b370f0695603d21f6f83f053e42cfc10caf7",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "2026.7.22",
+      "metadata_source": "local installed distribution",
+      "name": "certifi",
+      "project_urls": {
+        "Homepage": "https://github.com/certifi/python-certifi",
+        "Source": "https://github.com/certifi/python-certifi"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "2.1.1",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT-0",
+      "license_files": [
+        {
+          "bytes": 1123,
+          "leading_text_excerpt": "Except when otherwise stated (look for LICENSE files in directories or / information at the beginning of each file) all software and / documentation is licensed as follows: / MIT No Attribution / Permission is hereby granted, free of charge, to any person / ob",
+          "path": "cffi-2.1.1.dist-info/licenses/LICENSE",
+          "sha256": "5ba24ddc57067f9249add644c3afc41a5d6dc37e23433ef759d95df370b0af63",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "2.1.1",
+      "metadata_source": "local installed distribution",
+      "name": "cffi",
+      "project_urls": {
+        "Changelog": "https://cffi.readthedocs.io/en/latest/whatsnew.html",
+        "Contact": "https://groups.google.com/forum/",
+        "Documentation": "https://cffi.readthedocs.io/",
+        "Download": "https://github.com/python-cffi/cffi/releases",
+        "Issue Tracker": "https://github.com/python-cffi/cffi/issues",
+        "Source Code": "https://github.com/python-cffi/cffi"
+      },
+      "requires_dist": [
+        "pycparser; implementation_name != \"PyPy\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "3.5.1",
+      "license_classifiers": [],
+      "license_declared": "MIT",
+      "license_declared_sha256": "e5dcffe836b6ec8a58e492419b550e65fb8cbdc308503979e5dacb33ac7ea3b7",
+      "license_declared_truncated": false,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 1092,
+          "leading_text_excerpt": "MIT License / Copyright (c) 2025 TAHRI Ahmed R. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, including with",
+          "path": "charset_normalizer-3.5.1.dist-info/licenses/LICENSE",
+          "sha256": "18577485d3704f1a479ded8e573c0976cfed315fd2fd17983fa988da4c2f70d1",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "3.5.1",
+      "metadata_source": "local installed distribution",
+      "name": "charset-normalizer",
+      "project_urls": {
+        "Changelog": "https://github.com/jawah/charset_normalizer/blob/master/CHANGELOG.md",
+        "Code": "https://github.com/jawah/charset_normalizer",
+        "Documentation": "https://charset-normalizer.readthedocs.io/",
+        "Issue tracker": "https://github.com/jawah/charset_normalizer/issues"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "8.5.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "BSD-3-Clause",
+      "license_files": [
+        {
+          "bytes": 1475,
+          "leading_text_excerpt": "Copyright 2014 Pallets / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are / met: / 1.  Redistributions of source code must retain the above copyright / notice, this list",
+          "path": "click-8.5.0.dist-info/licenses/LICENSE.txt",
+          "sha256": "9a8ad106a394e853bfe21f42f4e72d592819a22805d991b5f3275029292b658d",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "8.5.0",
+      "metadata_source": "local installed distribution",
+      "name": "click",
+      "project_urls": {
+        "Changes": "https://click.palletsprojects.com/page/changes/",
+        "Chat": "https://discord.gg/pallets",
+        "Documentation": "https://click.palletsprojects.com/",
+        "Donate": "https://palletsprojects.com/donate",
+        "Source": "https://github.com/pallets/click/"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "0.4.6",
+      "license_classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "license_declared": null,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 1491,
+          "leading_text_excerpt": "Copyright (c) 2010 Jonathan Hartley / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are met: / * Redistributions of source code must retain the abo",
+          "path": "colorama-0.4.6.dist-info/licenses/LICENSE.txt",
+          "sha256": "cac35c02686e5d04a5a7140bfb3b36e73aed496656e891102e428886d7930318",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "0.4.6",
+      "metadata_source": "local installed distribution",
+      "name": "colorama",
+      "project_urls": {
+        "Homepage": "https://github.com/tartley/colorama"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "50.0.1",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "Apache-2.0 OR BSD-3-Clause",
+      "license_files": [
+        {
+          "bytes": 197,
+          "leading_text_excerpt": "This software is made available under the terms of *either* of the licenses / found in LICENSE.APACHE or LICENSE.BSD. Contributions to cryptography are made / under the terms of *both* these licenses.",
+          "path": "cryptography-50.0.1.dist-info/licenses/LICENSE",
+          "sha256": "3e0c7c091a948b82533ba98fd7cbb40432d6f1a9acbf85f5922d2f99a93ae6bb",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 11360,
+          "leading_text_excerpt": "Apache License / Version 2.0, January 2004 / https://www.apache.org/licenses/ / TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION / 1. Definitions. / \"License\" shall mean the terms and conditions for use, reproduction, / and distribution as defined ",
+          "path": "cryptography-50.0.1.dist-info/licenses/LICENSE.APACHE",
+          "sha256": "aac73b3148f6d1d7111dbca32099f68d26c644c6813ae1e4f05f6579aa2663fe",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1532,
+          "leading_text_excerpt": "Copyright (c) Individual contributors. / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are met: / 1. Redistributions of source code must retain the",
+          "path": "cryptography-50.0.1.dist-info/licenses/LICENSE.BSD",
+          "sha256": "602c4c7482de6479dd2e9793cda275e5e63d773dacd1eca689232ab7008fb4fb",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "50.0.1",
+      "metadata_source": "local installed distribution",
+      "name": "cryptography",
+      "project_urls": {
+        "changelog": "https://cryptography.io/en/latest/changelog/",
+        "documentation": "https://cryptography.io/",
+        "homepage": "https://github.com/pyca/cryptography",
+        "issues": "https://github.com/pyca/cryptography/issues",
+        "source": "https://github.com/pyca/cryptography/"
+      },
+      "requires_dist": [
+        "bcrypt>=3.1.5 ; extra == 'ssh'",
+        "cffi>=2.0.0 ; platform_python_implementation != 'PyPy'",
+        "typing-extensions>=4.13.2 ; python_full_version < '3.11'"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": true,
+      "installed_matches_lock": true,
+      "installed_version": "0.141.1",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1086,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2018 Sebastián Ramírez / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, i",
+          "path": "fastapi-0.141.1.dist-info/licenses/LICENSE",
+          "sha256": "4ec89ffc81485b97fec584b2d4a961032eeffe834453894fd9c1274906cc744e",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "0.141.1",
+      "metadata_source": "local installed distribution",
+      "name": "fastapi",
+      "project_urls": {
+        "Changelog": "https://fastapi.tiangolo.com/release-notes/",
+        "Documentation": "https://fastapi.tiangolo.com/",
+        "Homepage": "https://github.com/fastapi/fastapi",
+        "Issues": "https://github.com/fastapi/fastapi/issues",
+        "Repository": "https://github.com/fastapi/fastapi"
+      },
+      "requires_dist": [
+        "annotated-doc>=0.0.2",
+        "email-validator>=2.0.0; extra == \"all\"",
+        "email-validator>=2.0.0; extra == \"standard\"",
+        "email-validator>=2.0.0; extra == \"standard-no-fastapi-cloud-cli\"",
+        "fastapi-cli[standard-no-fastapi-cloud-cli]>=0.0.32; extra == \"standard-no-fastapi-cloud-cli\"",
+        "fastapi-cli[standard]>=0.0.32; extra == \"all\"",
+        "fastapi-cli[standard]>=0.0.32; extra == \"standard\"",
+        "fastar>=0.9.0; extra == \"standard\"",
+        "httpx<1.0.0,>=0.23.0; extra == \"all\"",
+        "httpx<1.0.0,>=0.23.0; extra == \"standard\"",
+        "httpx<1.0.0,>=0.23.0; extra == \"standard-no-fastapi-cloud-cli\"",
+        "itsdangerous>=1.1.0; extra == \"all\"",
+        "jinja2>=3.1.5; extra == \"all\"",
+        "jinja2>=3.1.5; extra == \"standard\"",
+        "jinja2>=3.1.5; extra == \"standard-no-fastapi-cloud-cli\"",
+        "pydantic-extra-types>=2.0.0; extra == \"all\"",
+        "pydantic-extra-types>=2.0.0; extra == \"standard\"",
+        "pydantic-extra-types>=2.0.0; extra == \"standard-no-fastapi-cloud-cli\"",
+        "pydantic-settings>=2.0.0; extra == \"all\"",
+        "pydantic-settings>=2.0.0; extra == \"standard\"",
+        "pydantic-settings>=2.0.0; extra == \"standard-no-fastapi-cloud-cli\"",
+        "pydantic>=2.9.0",
+        "python-multipart>=0.0.18; extra == \"all\"",
+        "python-multipart>=0.0.18; extra == \"standard\"",
+        "python-multipart>=0.0.18; extra == \"standard-no-fastapi-cloud-cli\"",
+        "pyyaml>=5.3.1; extra == \"all\"",
+        "starlette>=0.46.0",
+        "typing-extensions>=4.8.0",
+        "typing-inspection>=0.4.2",
+        "uvicorn[standard]>=0.12.0; extra == \"all\"",
+        "uvicorn[standard]>=0.12.0; extra == \"standard\"",
+        "uvicorn[standard]>=0.12.0; extra == \"standard-no-fastapi-cloud-cli\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "0.16.0",
+      "license_classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "license_declared": "MIT",
+      "license_declared_sha256": "e5dcffe836b6ec8a58e492419b550e65fb8cbdc308503979e5dacb33ac7ea3b7",
+      "license_declared_truncated": false,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 1124,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2016 Nathaniel J. Smith <njs@pobox.com> and other contributors / Permission is hereby granted, free of charge, to any person obtaining / a copy of this software and associated documentation files (the / \"Software\"), to dea",
+          "path": "h11-0.16.0.dist-info/licenses/LICENSE.txt",
+          "sha256": "37db5bb85926db28a427a25867f10b1232003aea1be69ccb851138adb8e6f361",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "0.16.0",
+      "metadata_source": "local installed distribution",
+      "name": "h11",
+      "project_urls": {
+        "Homepage": "https://github.com/python-hyper/h11"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "1.0.9",
+      "license_classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "license_declared": null,
+      "license_expression": "BSD-3-Clause",
+      "license_files": [
+        {
+          "bytes": 1518,
+          "leading_text_excerpt": "Copyright © 2020, [Encode OSS Ltd](https://www.encode.io/). / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are met: / * Redistributions of source ",
+          "path": "httpcore-1.0.9.dist-info/licenses/LICENSE.md",
+          "sha256": "fdcb59154c74cbaba16a11242f7740bea9f23d6feb5547917d8c5f94a80392a5",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "1.0.9",
+      "metadata_source": "local installed distribution",
+      "name": "httpcore",
+      "project_urls": {
+        "Documentation": "https://www.encode.io/httpcore",
+        "Homepage": "https://www.encode.io/httpcore/",
+        "Source": "https://github.com/encode/httpcore"
+      },
+      "requires_dist": [
+        "anyio<5.0,>=4.0; extra == 'asyncio'",
+        "certifi",
+        "h11>=0.16",
+        "h2<5,>=3; extra == 'http2'",
+        "socksio==1.*; extra == 'socks'",
+        "trio<1.0,>=0.22.0; extra == 'trio'"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": true,
+      "installed_matches_lock": true,
+      "installed_version": "0.28.1",
+      "license_classifiers": [
+        "License :: OSI Approved :: BSD License"
+      ],
+      "license_declared": "BSD-3-Clause",
+      "license_declared_sha256": "118dbcd2d5c9f9b296a9ede9fcc469c5840f7b98ad2c88461055bf2ceda38037",
+      "license_declared_truncated": false,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 1508,
+          "leading_text_excerpt": "Copyright © 2019, [Encode OSS Ltd](https://www.encode.io/). / All rights reserved. / Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met: / * Redistributions of source co",
+          "path": "httpx-0.28.1.dist-info/licenses/LICENSE.md",
+          "sha256": "4ec59d544f12b5f539a3a716fd321ac58ccd8030b465221f2c880200cdf28d8d",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "0.28.1",
+      "metadata_source": "local installed distribution",
+      "name": "httpx",
+      "project_urls": {
+        "Changelog": "https://github.com/encode/httpx/blob/master/CHANGELOG.md",
+        "Documentation": "https://www.python-httpx.org",
+        "Homepage": "https://github.com/encode/httpx",
+        "Source": "https://github.com/encode/httpx"
+      },
+      "requires_dist": [
+        "anyio",
+        "brotli; (platform_python_implementation == 'CPython') and extra == 'brotli'",
+        "brotlicffi; (platform_python_implementation != 'CPython') and extra == 'brotli'",
+        "certifi",
+        "click==8.*; extra == 'cli'",
+        "h2<5,>=3; extra == 'http2'",
+        "httpcore==1.*",
+        "idna",
+        "pygments==2.*; extra == 'cli'",
+        "rich<14,>=10; extra == 'cli'",
+        "socksio==1.*; extra == 'socks'",
+        "zstandard>=0.18.0; extra == 'zstd'"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "3.20",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "BSD-3-Clause",
+      "license_files": [
+        {
+          "bytes": 1541,
+          "leading_text_excerpt": "BSD 3-Clause License / Copyright (c) 2013-2026, Kim Davies and contributors. / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are / met: / 1. Redist",
+          "path": "idna-3.20.dist-info/licenses/LICENSE.md",
+          "sha256": "1a9a4f0e3d479a27240ddd59a9137a66ab4a0f9dfdc8ca6188cc0bfd85187f04",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "3.20",
+      "metadata_source": "local installed distribution",
+      "name": "idna",
+      "project_urls": {
+        "Changelog": "https://github.com/kjd/idna/blob/master/HISTORY.md",
+        "Issue tracker": "https://github.com/kjd/idna/issues",
+        "Source": "https://github.com/kjd/idna"
+      },
+      "requires_dist": [
+        "coverage >= 7.10.0 ; extra == \"all\"",
+        "hypothesis >= 6.141.1 ; extra == \"all\"",
+        "mypy >= 1.11.2 ; extra == \"all\"",
+        "pytest >= 8.3.2 ; extra == \"all\"",
+        "ruff >= 0.16.0 ; extra == \"all\"",
+        "ty >= 0.0.37 ; extra == \"all\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "2.3.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1098,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2010 - 2023 Holger Krekel and others / Permission is hereby granted, free of charge, to any person obtaining a copy of / this software and associated documentation files (the \"Software\"), to deal in / the Software without ",
+          "path": "iniconfig-2.3.0.dist-info/licenses/LICENSE",
+          "sha256": "3409fa91f7ace557894632676656e32264fe5ef7581535725dc9a23774551bd4",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "2.3.0",
+      "metadata_source": "local installed distribution",
+      "name": "iniconfig",
+      "project_urls": {
+        "Homepage": "https://github.com/pytest-dev/iniconfig"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "26.3",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "Apache-2.0 OR BSD-2-Clause",
+      "license_files": [
+        {
+          "bytes": 197,
+          "leading_text_excerpt": "This software is made available under the terms of *either* of the licenses / found in LICENSE.APACHE or LICENSE.BSD. Contributions to this software is made / under the terms of *both* these licenses.",
+          "path": "packaging-26.3.dist-info/licenses/LICENSE",
+          "sha256": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 10174,
+          "leading_text_excerpt": "Apache License / Version 2.0, January 2004 / http://www.apache.org/licenses/ / TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION / 1. Definitions. / \"License\" shall mean the terms and conditions for use, reproduction, / and distribution as defined b",
+          "path": "packaging-26.3.dist-info/licenses/LICENSE.APACHE",
+          "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1344,
+          "leading_text_excerpt": "Copyright (c) Donald Stufft and individual contributors. / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are met: / 1. Redistributions of source co",
+          "path": "packaging-26.3.dist-info/licenses/LICENSE.BSD",
+          "sha256": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "26.3",
+      "metadata_source": "local installed distribution",
+      "name": "packaging",
+      "project_urls": {
+        "Documentation": "https://packaging.pypa.io/",
+        "Source": "https://github.com/pypa/packaging"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "20260107",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1093,
+          "leading_text_excerpt": "Copyright (c) 2004-2016  Yusuke Shinyama <yusuke at shinyama dot jp> / Permission is hereby granted, free of charge, to any person / obtaining a copy of this software and associated documentation / files (the \"Software\"), to deal in the Software without / rest",
+          "path": "pdfminer_six-20260107.dist-info/licenses/LICENSE",
+          "sha256": "f01e5d699a33766b5caf4a5099f2856aba4f3f75ea1df05dc0572b34b4bea8f2",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "20260107",
+      "metadata_source": "local installed distribution",
+      "name": "pdfminer.six",
+      "project_urls": {
+        "Homepage": "https://github.com/pdfminer/pdfminer.six"
+      },
+      "requires_dist": [
+        "Pillow; extra == \"image\"",
+        "charset-normalizer>=2.0.0",
+        "cryptography>=36.0.0"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": true,
+      "installed_matches_lock": true,
+      "installed_version": "0.11.10",
+      "license_classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "license_declared": null,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 1086,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2015, Jeremy Singer-Vine / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction,",
+          "path": "pdfplumber-0.11.10.dist-info/licenses/LICENSE.txt",
+          "sha256": "0d48994da4d1321e395b5e64a724ed4dec63fb96b88ac5b88fc014771e690821",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "0.11.10",
+      "metadata_source": "local installed distribution",
+      "name": "pdfplumber",
+      "project_urls": {
+        "Homepage": "https://github.com/jsvine/pdfplumber"
+      },
+      "requires_dist": [
+        "Pillow>=12.2.0",
+        "pdfminer.six==20260107",
+        "pypdfium2>=5.9.0"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "12.3.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT-CMU",
+      "license_files": [
+        {
+          "bytes": 78016,
+          "leading_text_excerpt": "The Python Imaging Library (PIL) is / Copyright © 1997-2011 by Secret Labs AB / Copyright © 1995-2011 by Fredrik Lundh and contributors / Pillow is the friendly PIL fork. It is / Copyright © 2010 by Jeffrey 'Alex' Clark and contributors / Like PIL, Pillow is l",
+          "path": "pillow-12.3.0.dist-info/licenses/LICENSE",
+          "sha256": "4f7866a74802c6326f81faff59a56546b6aec2b10b91973e0e9308de95e79857",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "12.3.0",
+      "metadata_source": "local installed distribution",
+      "name": "pillow",
+      "project_urls": {
+        "Changelog": "https://github.com/python-pillow/Pillow/releases",
+        "Documentation": "https://pillow.readthedocs.io",
+        "Funding": "https://tidelift.com/subscription/pkg/pypi-pillow",
+        "Homepage": "https://python-pillow.github.io",
+        "Mastodon": "https://fosstodon.org/@pillow",
+        "Release notes": "https://pillow.readthedocs.io/en/stable/releasenotes/index.html",
+        "Source": "https://github.com/python-pillow/Pillow"
+      },
+      "requires_dist": [
+        "arro3-compute; extra == \"test-arrow\"",
+        "arro3-core; extra == \"test-arrow\"",
+        "coverage>=7.4.2; extra == \"tests\"",
+        "defusedxml; extra == \"tests\"",
+        "defusedxml; extra == \"xmp\"",
+        "furo; extra == \"docs\"",
+        "markdown2; extra == \"tests\"",
+        "nanoarrow; extra == \"test-arrow\"",
+        "olefile; extra == \"docs\"",
+        "olefile; extra == \"fpx\"",
+        "olefile; extra == \"mic\"",
+        "olefile; extra == \"tests\"",
+        "packaging; extra == \"tests\"",
+        "pyarrow; extra == \"test-arrow\"",
+        "pytest-cov; extra == \"tests\"",
+        "pytest-timeout; extra == \"tests\"",
+        "pytest-xdist; extra == \"tests\"",
+        "pytest; extra == \"tests\"",
+        "setuptools; extra == \"tests\"",
+        "sphinx-autobuild; extra == \"docs\"",
+        "sphinx-copybutton; extra == \"docs\"",
+        "sphinx-inline-tabs; extra == \"docs\"",
+        "sphinx>=8.2; extra == \"docs\"",
+        "sphinxext-opengraph; extra == \"docs\"",
+        "trove-classifiers>=2024.10.12; extra == \"tests\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "1.6.0",
+      "license_classifiers": [
+        "License :: OSI Approved :: MIT License"
+      ],
+      "license_declared": "MIT",
+      "license_declared_sha256": "e5dcffe836b6ec8a58e492419b550e65fb8cbdc308503979e5dacb33ac7ea3b7",
+      "license_declared_truncated": false,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 1110,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2015 holger krekel (rather uses bitbucket/hpk42) / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Softw",
+          "path": "pluggy-1.6.0.dist-info/licenses/LICENSE",
+          "sha256": "d6b65e6c213a5d0b577911d34d6e5949b9f59d76c238c5071a2f3fc16cfb2606",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference.",
+        "Project source URL not provided by local metadata."
+      ],
+      "locked_version": "1.6.0",
+      "metadata_source": "local installed distribution",
+      "name": "pluggy",
+      "project_urls": {},
+      "requires_dist": [
+        "coverage; extra == \"testing\"",
+        "pre-commit; extra == \"dev\"",
+        "pytest-benchmark; extra == \"testing\"",
+        "pytest; extra == \"testing\"",
+        "tox; extra == \"dev\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "3.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "BSD-3-Clause",
+      "license_files": [
+        {
+          "bytes": 1543,
+          "leading_text_excerpt": "pycparser -- A C parser in Python / Copyright (c) 2008-2022, Eli Bendersky / All rights reserved. / Redistribution and use in source and binary forms, with or without modification, / are permitted provided that the following conditions are met: / * Redistribut",
+          "path": "pycparser-3.0.dist-info/licenses/LICENSE",
+          "sha256": "0c846399369ea76ddd7b5c44fe6d16497415fcf015f5cbb508c24bf98b81c5b1",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "3.0",
+      "metadata_source": "local installed distribution",
+      "name": "pycparser",
+      "project_urls": {
+        "Homepage": "https://github.com/eliben/pycparser"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "2.13.5",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1129,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2017 to present Pydantic Services Inc. and individual contributors. / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to ",
+          "path": "pydantic-2.13.5.dist-info/licenses/LICENSE",
+          "sha256": "a9e186f3ca16b5eef84318e7a701721351a00cb7b8ae3a4394b67b49e3529ef3",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "2.13.5",
+      "metadata_source": "local installed distribution",
+      "name": "pydantic",
+      "project_urls": {
+        "Changelog": "https://docs.pydantic.dev/latest/changelog/",
+        "Documentation": "https://docs.pydantic.dev",
+        "Funding": "https://github.com/sponsors/samuelcolvin",
+        "Homepage": "https://github.com/pydantic/pydantic",
+        "Source": "https://github.com/pydantic/pydantic"
+      },
+      "requires_dist": [
+        "annotated-types>=0.6.0",
+        "email-validator>=2.0.0; extra == 'email'",
+        "pydantic-core==2.46.5",
+        "typing-extensions>=4.14.1",
+        "typing-inspection>=0.4.2",
+        "tzdata; (python_version >= '3.9' and platform_system == 'Windows') and extra == 'timezone'"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "2.46.5",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1101,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2022 Samuel Colvin / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restriction, inclu",
+          "path": "pydantic_core-2.46.5.dist-info/licenses/LICENSE",
+          "sha256": "fbe7f615f18d135c07000e5a86325db27f42c7729699ef166ac1f7a3f4586bf4",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "2.46.5",
+      "metadata_source": "local installed distribution",
+      "name": "pydantic_core",
+      "project_urls": {
+        "Funding": "https://github.com/sponsors/samuelcolvin",
+        "Homepage": "https://github.com/pydantic",
+        "Source": "https://github.com/pydantic/pydantic/tree/main/pydantic-core"
+      },
+      "requires_dist": [
+        "typing-extensions>=4.14.1"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "2.21.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "BSD-2-Clause",
+      "license_files": [
+        {
+          "bytes": 11048,
+          "leading_text_excerpt": "Pygments is written and maintained by Georg Brandl <georg@python.org>. / Major developers are Tim Hatch <tim@timhatch.com> and Armin Ronacher / <armin.ronacher@active-4.com>. / Other contributors, listed alphabetically, are: / * Sam Aaron -- Ioke lexer / * Jea",
+          "path": "pygments-2.21.0.dist-info/licenses/AUTHORS",
+          "sha256": "71a83872ad82f57be692cf827e048e2cd51d45169cfa1ea3f28706d97a872c0f",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1331,
+          "leading_text_excerpt": "Copyright (c) 2006-2022 by the respective authors (see AUTHORS file). / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are / met: / * Redistribution",
+          "path": "pygments-2.21.0.dist-info/licenses/LICENSE",
+          "sha256": "a9d66f1d526df02e29dce73436d34e56e8632f46c275bbdffc70569e882f9f17",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "2.21.0",
+      "metadata_source": "local installed distribution",
+      "name": "Pygments",
+      "project_urls": {
+        "Bug Tracker": "https://github.com/pygments/pygments/issues",
+        "Changelog": "https://github.com/pygments/pygments/blob/master/CHANGES",
+        "Documentation": "https://pygments.org/docs",
+        "Homepage": "https://pygments.org",
+        "Source": "https://github.com/pygments/pygments"
+      },
+      "requires_dist": [
+        "colorama>=0.4.6; extra == 'windows-terminal'"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "5.13.0",
+      "license_classifiers": [],
+      "license_declared": "BSD-3-Clause, Apache-2.0, dependency licenses",
+      "license_declared_sha256": "9b44dc040b9eb1454f6baf598061a6b6bfaba7d30d899f2b3a74f5f3812196ca",
+      "license_declared_truncated": false,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 11560,
+          "leading_text_excerpt": "Apache License / Version 2.0, January 2004 / http://www.apache.org/licenses/ / TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION / 1. Definitions. / \"License\" shall mean the terms and conditions for use, reproduction, / and distribution as defined b",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/LICENSES/Apache-2.0.txt",
+          "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1485,
+          "leading_text_excerpt": "Copyright (c) <year> <owner>. / Redistribution and use in source and binary forms, with or without modification, / are permitted provided that the following conditions are met: / 1. Redistributions of source code must retain the above copyright notice, this / ",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/LICENSES/BSD-3-Clause.txt",
+          "sha256": "ad9a9e823df025f42389c1812eae28019f657d1ed7b3a4ebfd5010b0736a0da4",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 14844,
+          "leading_text_excerpt": "Creative Commons Attribution 4.0 International Public License / By exercising the Licensed Rights (defined below), You accept and agree / to be bound by the terms and conditions of this Creative Commons / Attribution 4.0 International Public License (\"Public L",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/LICENSES/CC-BY-4.0.txt",
+          "sha256": "f1b1748301cd4274f46733c218d510929661b4990855de5fc645dacd69c4371c",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 11564,
+          "leading_text_excerpt": "Apache License / Version 2.0, January 2004 / https://www.apache.org/licenses/ / TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION / 1. Definitions. / \"License\" shall mean the terms and conditions for use, reproduction, / and distribution as defined ",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/abseil.txt",
+          "sha256": "f54fff0b905df5b3464527c652a30e903b172d6dcab4d89b5e6f105d5e4a4603",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 725,
+          "leading_text_excerpt": "//---------------------------------------------------------------------------- / // Anti-Grain Geometry - Version 2.3 / // Copyright (C) 2002-2005 Maxim Shemanarev (http://www.antigrain.com) / // / // Permission to copy, use, modify, sell and distribute this s",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/agg23.txt",
+          "sha256": "c110d3ea2ad77467ce0dcff7d3337e6c8be8049a5103f4b9bd5fd911a77972e5",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1106,
+          "leading_text_excerpt": "MIT License / Copyright (c) 2021 The fast_float authors / Permission is hereby granted, free of charge, to any / person obtaining a copy of this software and associated / documentation files (the \"Software\"), to deal in the / Software without restriction, incl",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/fast_float.txt",
+          "sha256": "bf1b57355feca8fce77ee95f48002f8d4789fb71b30ec7599c06cda4901fbb2b",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 6741,
+          "leading_text_excerpt": "The FreeType Project LICENSE / ---------------------------- / 2006-Jan-27 / Copyright 1996-2002, 2006 by / David Turner, Robert Wilhelm, and Werner Lemberg / Introduction / ============ / The FreeType  Project is distributed in  several archive packages; / som",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/freetype.txt",
+          "sha256": "f4b133e25df1f86ad3ffea453aa0e613f0474f34778dbbb3e437e7b2724937d8",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 28286,
+          "leading_text_excerpt": "UNICODE LICENSE V3 / COPYRIGHT AND PERMISSION NOTICE / Copyright © 2016-2025 Unicode, Inc. / NOTICE TO USER: Carefully read the following legal agreement. BY / DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR / SOFTWARE, YOU UNEQUIVOCALLY",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/icu.txt",
+          "sha256": "93679f4389d53b6835d89843f251844fb9bc455b35bab036d3c8e7abe497a47a",
+          "spdx_identifiers": [
+            "Unicode-3.0"
+          ]
+        },
+        {
+          "bytes": 1353,
+          "leading_text_excerpt": "//--------------------------------------------------------------------------------- / // / //  Little Color Management System / //  Copyright (c) 1998-2026 Marti Maria Saguer / // / // Permission is hereby granted, free of charge, to any person obtaining / // ",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/lcms.txt",
+          "sha256": "7312b68c5b25e9bf2b828706fb4e29588f22705112f411fd42e1f7d84c3d139a",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 13059,
+          "leading_text_excerpt": "libjpeg-turbo note:  This file has been modified by The libjpeg-turbo Project / to include only information relevant to libjpeg-turbo, to wordsmith certain / sections, and to remove impolitic language that existed in the libjpeg v8 / README.  It is included on",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/libjpeg_turbo.ijg",
+          "sha256": "db16a04128171879c60708d171b88d97345a2dd20f9bfc173680a4497c73f704",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 5755,
+          "leading_text_excerpt": "libjpeg-turbo Licenses / ====================== / libjpeg-turbo is covered by two compatible BSD-style open source licenses: / - The IJG (Independent JPEG Group) License, which is listed in / [README.ijg](README.ijg) / This license applies to the libjpeg API l",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/libjpeg_turbo.md",
+          "sha256": "be2b2b5ab168bce87bc3e31f2a5c5adba4b7f6e9e51d618e958d1d46972ebd95",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1794,
+          "leading_text_excerpt": "/* / * The copyright in this software is being made available under the 2-clauses / * BSD License, included below. This software may be subject to other third / * party and contributor rights, including patent rights, and no such rights / * are granted under t",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/libopenjpeg.txt",
+          "sha256": "c5ab0890a737c2dfa7ba675036554f6d17741d98629b0c2a145354d00617e6b2",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 5479,
+          "leading_text_excerpt": "COPYRIGHT NOTICE, DISCLAIMER, and LICENSE / ========================================= / PNG Reference Library License version 2 / --------------------------------------- / * Copyright (c) 1995-2026 The PNG Reference Library Authors. / * Copyright (c) 2018-2026",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/libpng.txt",
+          "sha256": "452390433ba0f88aa3e2b122c647741b72a0c117cd6ed7a329b49785aecb5511",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1139,
+          "leading_text_excerpt": "Copyright (c) 1988-1997 Sam Leffler / Copyright (c) 1991-1997 Silicon Graphics, Inc. / Permission to use, copy, modify, distribute, and sell this software and / its documentation for any purpose is hereby granted without fee, provided / that (i) the above copy",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/libtiff.txt",
+          "sha256": "92b72ba97e6c2749c2a94bc0ef646b47080217f1e772a482b33cf5a5f98a6506",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 15418,
+          "leading_text_excerpt": "============================================================================== / The LLVM Project is under the Apache License v2.0 with LLVM Exceptions: / ============================================================================== / Apache License / Version",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/llvm-libc.txt",
+          "sha256": "3b6226c32e168c83b891d8d6f0d3c29c2116dc3ef93dc93c307b54f279ecf383",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1184,
+          "leading_text_excerpt": "Copyright 2014-2025 Benoit Blanchon / Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation t",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/pdfium-binaries.txt",
+          "sha256": "8854f4388f1ca13b3ad9baa42e95f5546b4c0b17109c159256d3eca7be39b09b",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 12818,
+          "leading_text_excerpt": "Copyright 2014 The PDFium Authors / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are / met: / * Redistributions of source code must retain the above copyright / notice, ",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/pdfium.txt",
+          "sha256": "961eacd9633fff6d051db7208b755e9210e30efac7adec3e6a6d52798f0ccf0e",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1077,
+          "leading_text_excerpt": "Copyright 2021 The simdutf authors / Permission is hereby granted, free of charge, to any person obtaining a copy of / this software and associated documentation files (the \"Software\"), to deal in / the Software without restriction, including without limitatio",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/simdutf.txt",
+          "sha256": "c172a0ba936ff31230febb5dad869e25cb7c1a07480c7a381be8cf011bb52719",
+          "spdx_identifiers": []
+        },
+        {
+          "bytes": 1332,
+          "leading_text_excerpt": "/* zlib.h -- interface of the 'zlib' general purpose compression library / version 1.3.2.1, February xxth, 2026 / Copyright (C) 1995-2026 Jean-loup Gailly and Mark Adler / This software is provided 'as-is', without any express or implied / warranty.  In no eve",
+          "path": "pypdfium2-5.13.0.dist-info/licenses/data/windows_x64/BUILD_LICENSES/zlib.txt",
+          "sha256": "33fd641c9f3b0e0be64bc78fea9e94807674cdd70c48477599226cb8956565fe",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "5.13.0",
+      "metadata_source": "local installed distribution",
+      "name": "pypdfium2",
+      "project_urls": {
+        "Changelog": "https://pypdfium2.readthedocs.io/en/stable/changelog.html",
+        "Documentation": "https://pypdfium2.readthedocs.io",
+        "Homepage": "https://github.com/pypdfium2-team/pypdfium2",
+        "Source": "https://github.com/pypdfium2-team/pypdfium2",
+        "Tracker": "https://github.com/pypdfium2-team/pypdfium2/issues"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": true,
+      "installed_matches_lock": true,
+      "installed_version": "9.1.1",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1091,
+          "leading_text_excerpt": "The MIT License (MIT) / Copyright (c) 2004 Holger Krekel and others / Permission is hereby granted, free of charge, to any person obtaining a copy of / this software and associated documentation files (the \"Software\"), to deal in / the Software without restric",
+          "path": "pytest-9.1.1.dist-info/licenses/LICENSE",
+          "sha256": "ca836a5f9ecca3b2f350230faa20a48fb8b145653b5568d784862df864706b9b",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "9.1.1",
+      "metadata_source": "local installed distribution",
+      "name": "pytest",
+      "project_urls": {
+        "Changelog": "https://docs.pytest.org/en/stable/changelog.html",
+        "Contact": "https://docs.pytest.org/en/stable/contact.html",
+        "Funding": "https://docs.pytest.org/en/stable/sponsor.html",
+        "Homepage": "https://docs.pytest.org/en/latest/",
+        "Source": "https://github.com/pytest-dev/pytest",
+        "Tracker": "https://github.com/pytest-dev/pytest/issues"
+      },
+      "requires_dist": [
+        "argcomplete; extra == \"dev\"",
+        "attrs>=19.2; extra == \"dev\"",
+        "colorama>=0.4; sys_platform == \"win32\"",
+        "exceptiongroup>=1; python_version < \"3.11\"",
+        "hypothesis>=3.56; extra == \"dev\"",
+        "iniconfig>=1.0.1",
+        "mock; extra == \"dev\"",
+        "packaging>=22",
+        "pluggy<2,>=1.5",
+        "pygments>=2.7.2",
+        "requests; extra == \"dev\"",
+        "setuptools; extra == \"dev\"",
+        "tomli>=1; python_version < \"3.11\"",
+        "xmlschema; extra == \"dev\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": true,
+      "installed_matches_lock": true,
+      "installed_version": "1.2.3",
+      "license_classifiers": [],
+      "license_declared": "BSD-3-Clause",
+      "license_declared_sha256": "118dbcd2d5c9f9b296a9ede9fcc469c5840f7b98ad2c88461055bf2ceda38037",
+      "license_declared_truncated": false,
+      "license_expression": null,
+      "license_files": [
+        {
+          "bytes": 1556,
+          "leading_text_excerpt": "Copyright (c) 2014, Saurabh Kumar (python-dotenv), 2013, Ted Tieken (django-dotenv-rw), 2013, Jacob Kaplan-Moss (django-dotenv) / Redistribution and use in source and binary forms, with or without modification, / are permitted provided that the following condi",
+          "path": "python_dotenv-1.2.3.dist-info/licenses/LICENSE",
+          "sha256": "80619b7049f08c81683ad0e01f08f257a840652dd71ee83146d36658c7d2c2b9",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [
+        "No SPDX License-Expression metadata; declared license/classifiers and bundled texts are retained without inference."
+      ],
+      "locked_version": "1.2.3",
+      "metadata_source": "local installed distribution",
+      "name": "python-dotenv",
+      "project_urls": {
+        "Source": "https://github.com/theskumar/python-dotenv"
+      },
+      "requires_dist": [
+        "click>=5.0; extra == \"cli\""
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": true,
+      "installed_matches_lock": true,
+      "installed_version": "0.0.32",
+      "license_classifiers": [
+        "License :: OSI Approved :: Apache Software License"
+      ],
+      "license_declared": null,
+      "license_expression": "Apache-2.0",
+      "license_files": [
+        {
+          "bytes": 11358,
+          "leading_text_excerpt": "Apache License / Version 2.0, January 2004 / http://www.apache.org/licenses/ / TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION / 1. Definitions. / \"License\" shall mean the terms and conditions for use, reproduction, / and distribution as defined b",
+          "path": "python_multipart-0.0.32.dist-info/licenses/LICENSE.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "0.0.32",
+      "metadata_source": "local installed distribution",
+      "name": "python-multipart",
+      "project_urls": {
+        "Changelog": "https://github.com/Kludex/python-multipart/blob/master/CHANGELOG.md",
+        "Documentation": "https://kludex.github.io/python-multipart/",
+        "Homepage": "https://github.com/Kludex/python-multipart",
+        "Source": "https://github.com/Kludex/python-multipart"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "1.7.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "BSD-3-Clause",
+      "license_files": [
+        {
+          "bytes": 1518,
+          "leading_text_excerpt": "Copyright © 2018, [Encode OSS Ltd](https://www.encode.io/). / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are met: / * Redistributions of source ",
+          "path": "starlette-1.7.0.dist-info/licenses/LICENSE.md",
+          "sha256": "dcb95677a02240243187e964f941847d19b17821cf99e5afae684fab328c19bf",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "1.7.0",
+      "metadata_source": "local installed distribution",
+      "name": "starlette",
+      "project_urls": {
+        "Changelog": "https://starlette.dev/release-notes/",
+        "Documentation": "https://starlette.dev/",
+        "Funding": "https://github.com/sponsors/Kludex",
+        "Homepage": "https://github.com/Kludex/starlette",
+        "Source": "https://github.com/Kludex/starlette"
+      },
+      "requires_dist": [
+        "anyio<5,>=4.0.0",
+        "httpx2>=2.0.0; extra == 'full'",
+        "httpx<0.29.0,>=0.27.0; extra == 'full'",
+        "itsdangerous; extra == 'full'",
+        "jinja2; extra == 'full'",
+        "opentelemetry-api; extra == 'full'",
+        "python-multipart>=0.0.18; extra == 'full'",
+        "pyyaml; extra == 'full'",
+        "typing-extensions>=4.10.0; python_version < '3.13'"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "4.16.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "PSF-2.0",
+      "license_files": [
+        {
+          "bytes": 13936,
+          "leading_text_excerpt": "A. HISTORY OF THE SOFTWARE / ========================== / Python was created in the early 1990s by Guido van Rossum at Stichting / Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands / as a successor of a language called ABC.  Guido remains P",
+          "path": "typing_extensions-4.16.0.dist-info/licenses/LICENSE",
+          "sha256": "3b2f81fe21d181c499c59a256c8e1968455d6689d269aa85373bfb6af41da3bf",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "4.16.0",
+      "metadata_source": "local installed distribution",
+      "name": "typing_extensions",
+      "project_urls": {
+        "Bug Tracker": "https://github.com/python/typing_extensions/issues",
+        "Changes": "https://github.com/python/typing_extensions/blob/main/CHANGELOG.md",
+        "Documentation": "https://typing-extensions.readthedocs.io/",
+        "Home": "https://github.com/python/typing_extensions",
+        "Q & A": "https://github.com/python/typing/discussions",
+        "Repository": "https://github.com/python/typing_extensions"
+      },
+      "requires_dist": [],
+      "status": "matched"
+    },
+    {
+      "direct": false,
+      "installed_matches_lock": true,
+      "installed_version": "0.4.4",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "MIT",
+      "license_files": [
+        {
+          "bytes": 1090,
+          "leading_text_excerpt": "MIT License / Copyright (c) Pydantic Services Inc. 2025 to present / Permission is hereby granted, free of charge, to any person obtaining a copy / of this software and associated documentation files (the \"Software\"), to deal / in the Software without restrict",
+          "path": "typing_inspection-0.4.4.dist-info/licenses/LICENSE",
+          "sha256": "804b59b25f2c31bd278f9202a19ae49a3945aa2664387e2d0a128c7cacc61ec3",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "0.4.4",
+      "metadata_source": "local installed distribution",
+      "name": "typing-inspection",
+      "project_urls": {
+        "Changelog": "https://github.com/pydantic/typing-inspection/blob/main/HISTORY.md",
+        "Documentation": "https://pydantic.github.io/typing-inspection/dev/",
+        "Homepage": "https://github.com/pydantic/typing-inspection",
+        "Source": "https://github.com/pydantic/typing-inspection"
+      },
+      "requires_dist": [
+        "typing-extensions>=4.15.0"
+      ],
+      "status": "matched"
+    },
+    {
+      "direct": true,
+      "installed_matches_lock": true,
+      "installed_version": "0.54.0",
+      "license_classifiers": [],
+      "license_declared": null,
+      "license_expression": "BSD-3-Clause",
+      "license_files": [
+        {
+          "bytes": 1526,
+          "leading_text_excerpt": "Copyright © 2017-present, [Encode OSS Ltd](https://www.encode.io/). / All rights reserved. / Redistribution and use in source and binary forms, with or without / modification, are permitted provided that the following conditions are met: / * Redistributions of",
+          "path": "uvicorn-0.54.0.dist-info/licenses/LICENSE.md",
+          "sha256": "efe1acf3e62fb99c288b0ec73e5a773b7268ef4320fe757ea994214e4b63c371",
+          "spdx_identifiers": []
+        }
+      ],
+      "limitations": [],
+      "locked_version": "0.54.0",
+      "metadata_source": "local installed distribution",
+      "name": "uvicorn",
+      "project_urls": {
+        "Changelog": "https://uvicorn.dev/release-notes",
+        "Funding": "https://github.com/sponsors/Kludex",
+        "Homepage": "https://uvicorn.dev/",
+        "Source": "https://github.com/Kludex/uvicorn"
+      },
+      "requires_dist": [
+        "click>=7.0",
+        "h11>=0.8",
+        "httptools>=0.8.0; extra == 'standard'",
+        "python-dotenv>=0.13; extra == 'standard'",
+        "pyyaml>=5.1; extra == 'standard'",
+        "typing-extensions>=4.0; python_version < '3.11'",
+        "uvloop>=0.15.1; (sys_platform != 'win32' and (sys_platform != 'cygwin' and platform_python_implementation != 'PyPy')) and extra == 'standard'",
+        "watchfiles>=0.20; extra == 'standard'",
+        "websockets>=13.0; extra == 'standard'"
+      ],
+      "status": "matched"
+    }
+  ],
+  "runtime": {
+    "node": "v24.13.1",
+    "python": "3.12.4",
+    "python_license_files": [
+      {
+        "bytes": 36874,
+        "leading_text_excerpt": "A. HISTORY OF THE SOFTWARE / ========================== / Python was created in the early 1990s by Guido van Rossum at Stichting / Mathematisch Centrum (CWI, see https://www.cwi.nl) in the Netherlands / as a successor of a language called ABC.  Guido remains P",
+        "path": "LICENSE.txt",
+        "sha256": "e502c6b880ff58d614901495a9009c136539cd0b1e2a2abb8fc00b934c203419",
+        "spdx_identifiers": []
+      }
+    ],
+    "sqlite_bundled_version": "3.45.3",
+    "windows_ocr": "Optional Windows.Media.Ocr system component; not a pip/npm package; OS-specific license not inspected."
+  },
+  "schema_version": 1,
+  "scope": "Offline package inventory; metadata declarations and local file evidence, not a legal determination or full binary SBOM.",
+  "summary": {
+    "npm_absent_optional": 25,
+    "npm_absent_required": [],
+    "npm_installed": 24,
+    "npm_locked": 49,
+    "npm_version_mismatches": [],
+    "python_locked": 32,
+    "python_not_installed": [],
+    "python_version_mismatches": []
+  }
+}

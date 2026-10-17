@@ -104,6 +104,12 @@ def _evidence_bundle(run, get_document, snapshot_dir, legacy=False):
     files['audit.md']=markdown(run,audit=True,document_paths=paths).encode('utf-8')
     files['audit.html']=printable(run,audit=True,document_paths=paths).encode('utf-8')
     files['run.json']=json.dumps(run,ensure_ascii=False,indent=2).encode('utf-8')
+    from .research_extensions import context as extension_context
+    extension_inputs = extension_context(run)
+    if extension_inputs:
+        files['analysis/current-inputs.json'] = json.dumps(extension_inputs,ensure_ascii=False,indent=2).encode('utf-8')
+        for field in ('financial_period_records','financial_period_deleted','valuation_sensitivity_history','comparable_analyses','tracking_observations'):
+            if run.get(field): files['analysis/'+field+'.json'] = json.dumps(run[field],ensure_ascii=False,indent=2).encode('utf-8')
     for file in snapshot_dir.glob('*.json'): files['snapshots/'+file.name]=competition.read_bytes(file)
     references=[]
     for url in sorted(urls):
@@ -185,6 +191,92 @@ def prose_html(value):
     # Escape before the tiny Markdown presentation pass: never execute model HTML.
     return ''.join('<p>'+re.sub(r'\*\*([^*]+)\*\*',r'<strong>\1</strong>',escape(p)).replace('\n','<br>')+'</p>' for p in str(value).split('\n\n') if p.strip())
 
+
+def extension_html(value):
+    """Render our generated analysis Markdown without trusting embedded HTML.
+
+    Only structural Markdown is interpreted. Cell text, quotes, code, links,
+    headings and paragraph content are escaped; no content supplies attributes
+    or raw tags. Blank lines between generated table rows are tolerated.
+    """
+    lines = str(value).replace('\r\n', '\n').replace('\r', '\n').split('\n')
+    blocks = []
+
+    def nonblank(index):
+        while index < len(lines) and not lines[index].strip(): index += 1
+        return index
+
+    def cells(line):
+        line = line.strip()
+        if not line.startswith('|') or not line.endswith('|'): return None
+        return [part.strip().replace('\\|', '|') for part in re.split(r'(?<!\\)\|', line[1:-1])]
+
+    def table_start(index):
+        head = cells(lines[index])
+        divider = nonblank(index + 1)
+        parts = cells(lines[divider]) if divider < len(lines) else None
+        if head and parts and len(head) == len(parts) and all(re.fullmatch(r':?-{3,}:?', item) for item in parts):
+            return head, divider
+        return None
+
+    def list_item(line):
+        return re.match(r'^\s*(?:([-*+])|(\d+)[.)])\s+(.+)$', line)
+
+    def starts_block(index):
+        line = lines[index].strip()
+        return bool(line.startswith('```') or re.match(r'^#{1,6}\s+', line) or line.startswith('>')
+                    or list_item(line) or table_start(index))
+
+    index = 0
+    while index < len(lines):
+        if not lines[index].strip(): index += 1; continue
+        line = lines[index].strip()
+        if line.startswith('```'):
+            index += 1; body = []
+            while index < len(lines) and not lines[index].strip().startswith('```'):
+                body.append(lines[index]); index += 1
+            if index < len(lines): index += 1
+            blocks.append('<pre><code>' + escape('\n'.join(body)) + '</code></pre>')
+            continue
+        heading = re.match(r'^(#{1,6})\s+(.+)$', line)
+        if heading:
+            level = str(len(heading[1]))
+            blocks.append('<h' + level + '>' + escape(heading[2]) + '</h' + level + '>')
+            index += 1; continue
+        table = table_start(index)
+        if table:
+            head, divider = table
+            rows = []; index = divider + 1
+            while index < len(lines):
+                candidate = nonblank(index)
+                row = cells(lines[candidate]) if candidate < len(lines) else None
+                if row is None or len(row) != len(head): break
+                rows.append(row); index = candidate + 1
+            blocks.append('<table class="extension-table"><thead><tr>' + ''.join('<th>' + escape(cell) + '</th>' for cell in head)
+                          + '</tr></thead><tbody>' + ''.join('<tr>' + ''.join('<td>' + escape(cell) + '</td>' for cell in row)
+                          + '</tr>' for row in rows) + '</tbody></table>')
+            continue
+        if line.startswith('>'):
+            body = []
+            while index < len(lines) and lines[index].lstrip().startswith('>'):
+                body.append(re.sub(r'^\s*> ?', '', lines[index])); index += 1
+            blocks.append('<blockquote>' + '<br>'.join(escape(item) for item in body) + '</blockquote>')
+            continue
+        item = list_item(line)
+        if item:
+            ordered = bool(item[2]); tag = 'ol' if ordered else 'ul'; items = []
+            while index < len(lines):
+                candidate = nonblank(index); item = list_item(lines[candidate]) if candidate < len(lines) else None
+                if not item or bool(item[2]) != ordered: break
+                items.append(item[3]); index = candidate + 1
+            blocks.append('<' + tag + '>' + ''.join('<li>' + escape(item) + '</li>' for item in items) + '</' + tag + '>')
+            continue
+        body = [lines[index]]; index += 1
+        while index < len(lines) and lines[index].strip() and not starts_block(index):
+            body.append(lines[index]); index += 1
+        blocks.append('<p>' + '<br>'.join(escape(item) for item in body) + '</p>')
+    return ''.join(blocks)
+
 def markdown(run, audit=False, document_paths=None):
     if not audit: run = comparison_view(run)
     run=rewrite_document_links(run,document_paths) if document_paths is not None else deepcopy(run)
@@ -246,6 +338,9 @@ def markdown(run, audit=False, document_paths=None):
         lines += ["\n## 对话补充材料", "以下材料已接入全文查阅，未自动覆盖已核验财务事实。"]+[json.dumps(d,ensure_ascii=False) for d in run["attached_documents"]]
     if audit: lines += ["\n## 运行记录"]+[f"- {e['time']} {e['label']}：{e['detail']}" for e in run["events"]]
     lines += [f"Run ID: {run['id']} | 版本: {run['version']}"]
+    from .research_extensions import markdown as extension_markdown
+    extra = extension_markdown(run, audit=audit)
+    if extra: lines.append(extra)
     return re.sub(r"(\|[^\n]*\|)\n\n(?=\|)",r"\1\n","\n\n".join(lines))
 
 def printable(run, audit=False, document_paths=None):
@@ -300,6 +395,9 @@ def printable(run, audit=False, document_paths=None):
         if q.get('next_action'): scenario_html+='<p>下一步：'+e(q['next_action'])+'</p>'
         scenario_html+='<p>反方：'+e(q.get('counter_evidence') or '待补充')+'</p><ul>'+''.join('<li>'+e(g)+'</li>' for g in q.get('gaps',[]))+'</ul></article>'
     events="".join("<li>"+e(v["time"])+" · "+e(v["label"])+"："+e(v["detail"])+"</li>" for v in run["events"])
+    from .research_extensions import markdown as extension_markdown
+    extra = extension_markdown(run, audit=audit)
+    if extra: scenario_html += '<section>' + extension_html(extra) + '</section>'
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>{e(run['company'])} · 研究底稿</title>
 <style>body{{font:14px/1.85 system-ui,"Microsoft YaHei",sans-serif;color:#334155;margin:45px auto;padding:0 28px;max-width:980px}}header{{border-bottom:3px solid #a02070;padding-bottom:24px}}.brand{{font-size:12px;letter-spacing:2px;color:#64748b}}h1{{font-size:29px;margin:14px 0}}h2{{margin-top:34px;font-size:20px;color:#475569}}h3{{font-size:15px}}.muted{{font-size:12px;color:#64748b}}table{{width:100%;border-collapse:collapse;text-align:right;font-variant-numeric:tabular-nums}}td,th{{padding:12px;border-bottom:1px solid #e2e8f0}}thead{{background:#f8fafc}}th:first-child{{text-align:left}}.summary,.counter{{padding:18px;background:#fcf6fa;border-left:3px solid #e5bed5}}.thesis{{margin:22px 0}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 monospace;background:#f8fafc;padding:15px;border:1px solid #e2e8f0}}a{{color:#a02070}}li{{margin:7px 0}}details{{margin:18px 0}}summary{{cursor:pointer;font-weight:600}}footer{{border-top:1px solid #e2e8f0;margin-top:35px;padding-top:16px}}@media print{{body{{margin:0;max-width:none;font-size:11px}}h2,h3{{break-after:avoid}}tr,.counter{{break-inside:avoid}}.print-hint{{display:none}}}}</style></head><body>
 <header><div class="brand">析鲸AI RESEARCH DESK · {e(memo.get('generator_version',run['version']))} · 报告第 {run.get('report_revision',1)} 版</div><h1>{e(memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究')}</h1>

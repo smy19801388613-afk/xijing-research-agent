@@ -1,6 +1,7 @@
 import {useEffect,useState} from 'react';
 import {Calculator,MessageSquare,ArrowRight,History,Info,LoaderCircle} from 'lucide-react';
 import {api,post,decimal} from './api';
+import ValuationAnalysis from './ValuationAnalysis';
 const inputLabels:any={growth_pct:['预测增速','%'],multiple:['估值倍数','倍'],shares_100m:['摊薄股本','亿股'],book_equity_100m:['归母净资产','亿元'],base_fcff_100m:['基期 FCFF','亿元'],years:['预测期','年'],wacc_pct:['WACC','%'],terminal_growth_pct:['永续增长率','%'],equity_bridge_100m:['股权桥接扣减','亿元'],ebitda_100m:['预测 EBITDA','亿元'],dividend_per_share:['基期每股股利','元/股'],cost_of_equity_pct:['股权成本','%']};
 export function AssumptionChips({values}:any){return <div className="assumption-chips">{Object.entries(values).map(([k,v]:any)=><span key={k}>{inputLabels[k]?.[0]||k}：<b>{decimal(v)} {inputLabels[k]?.[1]}</b></span>)}</div>}
 export function ValuationResult({result,compact=false}:any){
@@ -31,5 +32,6 @@ export default function ValuationLab({run,onUpdated,onDiscuss}:any){
     </form><div>{result?<section className="panel"><ValuationResult result={result}/></section>:<section className="panel empty-valuation"><Calculator size={28}/><h2>等待一组有依据的假设</h2><p>可以直接填写，也可以先与 Agent 讨论。缺失参数会明确保留，不会自动填入看似合理的数字。</p></section>}
       <section className="panel valuation-history"><header><History size={17}/><h2>情景记录</h2><span>{history.length} 份</span></header>{[...history].reverse().map((v:any)=><button key={v.id} className={result?.id===v.id?'selected':''} onClick={()=>{setChosen(v.id);setMethod(v.method);setInputs(v.assumptions)}}><span><strong>{v.method_name}</strong><small>{v.origin!=='form'?'通过研究对话':'手动输入'} · {new Date(v.created_at).toLocaleTimeString('zh-CN')}</small></span><b>{decimal(v.output.equity_value_100m??v.output.enterprise_value_100m??v.output.price)}<small>{v.method==='ddm'?'元/股':'亿元'}</small></b></button>)}{!history.length&&<p className="small-muted pad">尚未保存估值情景</p>}</section>
     </div></div>}
+    <ValuationAnalysis key={run.id} run={run} currentScenario={result} onUpdated={onUpdated} onDiscuss={onDiscuss}/>
   </div>
 }

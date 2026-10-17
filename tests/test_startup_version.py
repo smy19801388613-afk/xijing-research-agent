@@ -13,7 +13,7 @@ from app.config import ROOT, VERSION
 
 def test_shell_and_running_version_are_not_cached(tmp_path, monkeypatch):
     (tmp_path / 'index.html').write_text('<html>current shell</html>', encoding='utf-8')
-    static = next(r.app for r in main.app.routes if r.name == 'web')
+    static = next(r.app for r in main.app.routes if getattr(r, 'name', None) == 'web')
     monkeypatch.setattr(static, 'directory', str(tmp_path))
     monkeypatch.setattr(static, 'all_directories', [str(tmp_path)])
     monkeypatch.setattr(main.connections, 'public_settings', lambda: {'version': VERSION})

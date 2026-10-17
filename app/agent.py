@@ -74,6 +74,12 @@ attach_document: {document_id:资料库已有文件ID}。接入当前对话，�
 search_documents: {queries:[最多6个2到40字关键词],document_id:可选}。检索已接入的 PDF 全文，返回带页码原文；可继续读取命中页及相邻页。
 read_document: {document_id:文件ID,page:PDF页码,count:连续页数1到3}。读取指定页，核对表头、单位、附注与上下文。
 valuation_options: {}，取得六种方法、输入字段、可用历史基数。
+record_financial_periods: {records:[{metric:revenue|n_income_attr_p|deducted_profit|n_cashflow_act|accounts_receivable|inventory|total_assets|total_liabilities,year:年度,period:Q1|Q2|Q3|Q4|FY|H1|9M,period_type:cumulative|single|point,value:数字字符串,unit:元|千元|万元|亿元,currency:CNY,scope:consolidated|parent,comparability_key:一致的可比口径说明,restatement:original|restated,source_type:existing,source_id:已有来源ID,quote:连续原文摘录,announced_date:YYYY-MM-DD}]}。从已读原文登记期间记录；每项核对表头、期间和单位，金额必须出现在摘录中；不能编造来源或将用户手工数标为已核验。不覆盖旧年度底稿。
+analyze_financial_periods: {}。读取期间记录与程序计算的单季度、同比、环比、扣非桥接及现金流背离提示。累计流量才可相减，资产负债时点余额不能相减成单季度；缺数、冲突、负基数不能编造增长率。
+calculate_sensitivity: {base_scenario_id:已保存估值ID,axis_x:[2到9个数字],axis_y:[2到9个数字],axis_quotes:{x:含全部x轴数值的用户原话,y:含全部y轴数值的用户原话}}。用户明确轴值后计算二维矩阵。PE/PS为增速×倍数，DCF为WACC×永续增长，PB为归母净资产×倍数，EV/EBITDA为EBITDA×倍数，DDM为股权成本×永续增长。未给轴值先讨论或提示在估值页填写，不擅自取范围。情景最小最大值不是置信区间或投资目标价。
+save_comparables: {method:pe|ps|pb,period_kind:TTM|FY|forward,period_label:TTM用YYYY-MM-DD其余用YYYY,valuation_date:YYYY-MM-DD,currency:CNY,rows:[{company:名称,ticker:代码,multiple:倍数,price:可选股价,denominator_per_share:可选每股分母,multiple_basis:倍数口径,price_basis:可选价格日期口径,denominator_basis:可选分母口径,source_ids:[已有来源ID],note:局限}]}。整理可比依据并分组，模型写入每行必须有真实来源与数值原文，仍标待核验。不得自动采用中位数或伪称同业合理估值。
+get_tracking_metrics: {}。获取当前报告跟踪指标、report_identity及观察记录。
+record_tracking_observation: {metric_id:指标ID,report_identity:刚读取的报告标识,source_id:来源ID,quote:连续原文,observation:本次观察与论点的关系,assessment:supporting|challenging|inconclusive}。追加观察记录，报告版本不变；修改报告须另用修订工具。
 calculate_valuation: {method:pe|ps|pb|dcf|ev_ebitda|ddm,assumptions:{字段:数字},assumption_quotes:{字段:用户原话}}。实际重算并保存新版本。
 propose_valuation: {method:方法ID,assumptions:{完整必需字段:数字},rationale:假设依据及仍待核实的内容}。保存待确认方案，不生成估值结论。
 calculate_proposal: {proposal_id:已展示的方案ID}。用户明确采用后，计算保存。
@@ -272,6 +278,9 @@ def enforce_valuation_scope(chat,name,args):
     elif name=='calculate_proposal':
         value=next((p for p in chat.get('proposals',[]) if p.get('id')==args.get('proposal_id')
                     and p.get('run_id')==chat.get('run_id')), {})
+    elif name=='calculate_sensitivity':
+        run = store.get_run(chat['run_id'])
+        value = next((s for s in run.get('valuation_history', []) if s['id']==args.get('base_scenario_id')), {})
     else: return
     assumptions=value.get('assumptions',{})
     shares=isinstance(assumptions,dict) and assumptions.get('shares_100m') not in (None,'')
@@ -350,6 +359,56 @@ def tool(chat,name,args,model_input_run=None):
         return {"run_id":run["id"],"company":run["company"],"state":run["state"],"fact_count":len(run["facts"]),"gaps":run["gaps"],"artifact":"research"}
     if not chat.get("run_id"): raise ValueError("请先选择或创建一份公司研究")
     run=store.get_run(chat["run_id"])
+    if name=='record_financial_periods':
+        from .financial_periods import save_records
+        return {**save_records(run['id'], args.get('records'), origin='model'), 'operation':'saved'}
+    if name=='analyze_financial_periods':
+        from .financial_periods import snapshot
+        return {**snapshot(run), 'operation':'analyzed'}
+    if name=='calculate_sensitivity':
+        from .valuation_analysis import save_sensitivity
+        quotes=args.get('axis_quotes') or {}
+        human=task_request(chat) if task_contract.is_pure_continuation(latest_user(chat)) else latest_user(chat)
+        for axis in ('x','y'):
+            quote=quotes.get(axis,'')
+            if not isinstance(quote,str) or not quote.strip() or quote not in human:
+                raise ValueError('敏感性轴值需由用户明确提供，请引用包含各轴数值的用户原话，或在估值页手动选择。')
+            # The quoted substring cannot hide a preceding negation such as
+            # “不要用增长0和10”. Inspect its actual human-authored clause.
+            positions=[m.start() for m in re.finditer(re.escape(quote),human)]
+            clauses=[]
+            for pos in positions:
+                start=max((human.rfind(c,0,pos) for c in '，,。；;\n'),default=-1)+1
+                ends=[human.find(c,pos+len(quote)) for c in '，,。；;\n']
+                end=min((e for e in ends if e>=0),default=len(human))
+                clauses.append(human[start:end])
+            if not clauses or any(re.search(r'不要|不得|不能|不采用|不用|别用|禁止|暂不|先不',c) for c in clauses):
+                raise ValueError('否定的轴值说明不能作为计算授权')
+            numbers={Decimal(n) for n in re.findall(r'(?<![\d.])-?\d+(?:\.\d+)?',quote)}
+            values=args.get('axis_'+axis,[])
+            if not isinstance(values,list) or any(isinstance(v,bool) or Decimal(str(v)) not in numbers for v in values):
+                raise ValueError('敏感性轴值必须逐一来自用户原话；当前存在未确认的数值')
+        return save_sensitivity(run['id'], {k:args.get(k) for k in ('base_scenario_id','axis_x','axis_y')})
+    if name=='save_comparables':
+        from .valuation_analysis import save_comparables
+        from .evidence_policy import eligibility
+        refs=questions.catalog(run)
+        for row in args.get('rows',[]):
+            sources=[refs.get(sid,{}) for sid in row.get('source_ids',[])]
+            if not sources or any(not eligibility(s,run)['supports_answer'] for s in sources):
+                raise ValueError('模型整理可比公司必须关联当前已读、日期合格的真实来源；用户未核验数值请在估值页录入')
+            text=' '.join(str(s.get('text') or s.get('quote') or '') for s in sources).replace(',','').replace('，','')
+            numbers={Decimal(n) for n in re.findall(r'(?<![\d.])-?\d+(?:\.\d+)?',text)}
+            for key in ('multiple','price','denominator_per_share'):
+                if row.get(key) is not None and Decimal(str(row[key])) not in numbers:
+                    raise ValueError('可比数值未在关联原文中出现；请补读原文，不能把估计参数当成同行事实')
+        return save_comparables(run['id'],args)
+    if name=='get_tracking_metrics':
+        from .research_tracking import snapshot
+        return snapshot(run)
+    if name=='record_tracking_observation':
+        from .research_tracking import record_observation
+        return {**record_observation(run['id'],args.get('metric_id'),args,origin='model'), 'artifact':'tracking_observation'}
     if name=="plan_research_questions": return questions.plan(run['id'],args.get('questions',[]))
     if name=="update_research_question": return questions.update(run['id'],[args],'model')
     if name in ("build_investment_memo","refine_investment_memo"):
@@ -478,6 +537,13 @@ def completed_artifacts(results):
         if not isinstance(r.get('result'),dict) or r['result'].get('error'): continue
         if r.get('tool') in ('search_documents','read_document'): found.add('document_search')
         if r.get('tool')=='read_document': found.add('document_read')
+        if r['result'].get('artifact')=='valuation_analysis':
+            found.add(r['result'].get('analysis_kind'))
+        if r['result'].get('artifact')=='financial_periods':
+            found.discard('financial_periods')
+            if r['result'].get('records'):
+                found.add('financial_period_analysis')
+                if r['result'].get('operation')=='saved': found.add('financial_period_records')
     return found
 
 
@@ -488,6 +554,9 @@ def cacheable_step(step):
     if result.get('status') in ('failed','error','blocked','excluded','excluded_after_cutoff','needs_ocr','empty','document_link'):
         return False
     name=step.get('tool')
+    if name in ('record_financial_periods','analyze_financial_periods','calculate_sensitivity',
+                'save_comparables','get_tracking_metrics','record_tracking_observation'):
+        return False
     if name=='web_search': return bool(result.get('results'))
     if name=='search_company': return bool(result.get('items'))
     if name in ('read_webpage','read_web_page'): return bool(str(result.get('text') or '').strip())
@@ -557,6 +626,9 @@ def reusable_step(chat, name, args):
 
 
 ARTIFACT_LABELS = {'report':'保存研究报告','valuation':'完成估值计算','proposal':'整理估值方案',
+    'sensitivity':'计算估值敏感性','comparables':'保存可比倍数依据',
+    'financial_period_records':'保存财务期间记录','financial_period_analysis':'分析财务期间',
+    'tracking_observation':'保存跟踪观察',
     'document':'取得年报','document_search':'查阅资料','document_read':'逐页查阅原文'}
 
 
@@ -631,6 +703,10 @@ def stop_at_deadline(cid,turn_id):
 
 def failed_action_fingerprint(name,args):
     """Explanatory wording cannot turn the same invalid valuation into progress."""
+    if name in ('build_investment_memo','refine_investment_memo'):
+        # The actual request is resolved from the human task contract; changing
+        # a model-authored description is not a new attempt with new inputs.
+        args={}
     if name in ('propose_valuation','calculate_valuation'):
         method=str(args.get('method','')).strip().lower()
         spec=next((m for m in valuation.CATALOG if m['id']==method),None)
@@ -663,6 +739,7 @@ def execute(cid,expected_turn_id=None):
     ctx=chat.get('turn_contexts',{}).get(turn_id,{})
     budget=execution_budget.current()
     decisions_used=0;stalled=0;failed_actions=set();last_stalled_action=None;completion_retries=0
+    dynamic_reads={}
     def no_progress(reason,key=None):
         nonlocal stalled,last_stalled_action
         action=key if key is not None else ('invalid_progress',)
@@ -719,6 +796,9 @@ def execute(cid,expected_turn_id=None):
                     "library":"接入资料可选择资料库已有 PDF","annual_reports":"查找年报或 fetch_annual_report 使用巨潮公开披露，无需 Tushare Token",
                     "pdf_reading":"全文检索与按页查阅，扫描页使用 Windows 本机中文 OCR，保留识别标记，金额需核对原图","history":"可删除到回收站并恢复",
                     "internet":"web_search真实联网与read_webpage正文阅读，搜索摘要和全文分别标记，来源跨轮保留",
+                    "financial_periods":"财务期间页面支持期间登记、单季度拆分、同比环比；聊天可从已读来源登记",
+                    "valuation_analysis":"已保存情景可做双轴敏感性；可比倍数有期间、日期、币种和来源，输入待核验",
+                    "tracking":"新深度报告有结构化跟踪指标，可追加带原文的观察；报告需显式修订",
                     "memo":"build_investment_memo多轮检索、公司分析、反方审阅并保存报告；公司研究页查看，右上导出支持HTML/Markdown/证据包"},
                 "attached_documents":[documents.public_document(d) for d in documents.attached_documents(chat)],
                 "available_structured_materials":[m for m in competition.materials()
@@ -739,7 +819,7 @@ def execute(cid,expected_turn_id=None):
                 unmet=required-actual
                 # A failed tool may legitimately need missing inputs. A mere plan is not completion.
                 unmet={a for a in unmet if not ({"report":set(),"valuation":{"calculate_valuation","calculate_proposal"},"proposal":{"propose_valuation"},
-                    "document":{"fetch_annual_report","attach_document"},"document_search":{"search_documents","read_document"},"document_read":{"read_document"}}[a]&attempted)}
+                    "document":{"fetch_annual_report","attach_document"},"document_search":{"search_documents","read_document"},"document_read":{"read_document"}}.get(a,set())&attempted)}
                 if ('document_targets' in research_plan['pending_obligations'] and 'search_documents' in attempted
                         and not resume_plan.recovery(chat,current_run,research_plan)):
                     # A real local search with no readable candidate is a
@@ -755,7 +835,7 @@ def execute(cid,expected_turn_id=None):
                         'document':'调用 fetch_annual_report 或 attach_document 获取并接入年报',
                         'report':'调用 build_investment_memo 生成并保存深度研究报告，或修正 revise_report 的引用后保存','valuation':'调用 calculate_valuation 或 calculate_proposal 执行用户要求的计算',
                         'proposal':'调用 propose_valuation 保存待确认的方案'}
-                    no_progress("上次回复未通过执行校验。下一步需要："+'；'.join(actions[a] for a in sorted(unmet))+
+                    no_progress("上次回复未通过执行校验。下一步需要："+'；'.join(actions.get(a,ARTIFACT_LABELS.get(a,a)) for a in sorted(unmet))+
                         "。不要重复相同答复或再次要求批准；若缺少输入，尝试对应工具并说明具体缺口。")
                     continue
                 message=str(decision.get("message","")).strip()
@@ -881,7 +961,17 @@ def execute(cid,expected_turn_id=None):
                             key=(name,json.dumps(args,sort_keys=True,ensure_ascii=False)))
             else:
                 results.append({"tool":name,"result":result})
-                if state=='completed': stalled=0;last_stalled_action=None
+                if state=='completed':
+                    # These reads must execute against current state, never an
+                    # old cache. Identical fresh results still are not progress.
+                    if name in ('get_tracking_metrics','analyze_financial_periods'):
+                        key=(name,json.dumps(args,sort_keys=True,ensure_ascii=False))
+                        fingerprint=hashlib.sha256(json.dumps(result,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+                        if dynamic_reads.get(key)==fingerprint:
+                            no_progress('本次'+LABELS.get(name,'研究读取')+'与刚才的结果完全一致。当前结果已经返回，请据此推进已授权的分析或报告修订。',key=key)
+                        else:
+                            dynamic_reads[key]=fingerprint;stalled=0;last_stalled_action=None
+                    else: stalled=0;last_stalled_action=None
                 else:
                     failure_key=failed_action_fingerprint(name,args)
                     feedback='此次'+LABELS.get(name,'研究操作')+'失败：'+str(result.get('error') or result.get('status') or '没有取得有效结果')[:600]

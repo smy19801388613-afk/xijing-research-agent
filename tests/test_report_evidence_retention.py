@@ -236,7 +236,12 @@ def test_build_repair_passes_current_draft_citations_after_new_sources_arrive(tm
                          'counter_evidence': '仍需比较口径', 'invalidate_if': '原始披露出现变化', 'status': 'inference'}
                         for label in ('余额', '回款')],
              'sections': [{'key': key, 'body': '已读原文与推断分开。', 'evidence_ids': ['balance'], 'status': 'inference'}
-                          for key in deep.SECTION_TITLES], 'questions': [], 'limitations': []}
+                          for key in deep.SECTION_TITLES], 'questions': [], 'limitations': [],
+             'tracking_metrics': [{'id': 'balance-tracking', 'name': '合同负债余额', 'definition': '合同负债同口径期末余额',
+                 'thesis': '余额', 'baseline': {'status': 'missing', 'value': '尚缺同口径完整数值', 'period': ''},
+                 'frequency': '定期披露后', 'next_check': '下一次定期报告披露后',
+                 'support_condition': '余额变动与实际交付一致', 'invalidate_condition': '余额与退货退款出现矛盾',
+                 'threshold_basis': 'qualitative', 'next_action': '核对明细', 'status': 'needs_baseline'}]}
     calls = []
 
     def model(system, payload, *args, **kwargs):

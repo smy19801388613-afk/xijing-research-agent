@@ -18,6 +18,17 @@ def candidate():
         'sections':[{'key':key,'body':'具体分析，原始证据与推断分开。','evidence_ids':['web-product'],'status':'inference'} for key in deep.SECTION_TITLES],
         'questions':['按产品核对订单、验收与回款'],'limitations':['没有独立披露产品利润']}
 
+
+def tracked_candidate():
+    """New deep generations must supply a plan, including an honest missing baseline."""
+    value=candidate()
+    value['tracking_metrics']=[{'id':'product-cash','name':'产品商业化回款','definition':'具体产品订单对应的验收与实际收款',
+        'thesis':'产品商业化','baseline':{'status':'missing','value':'未取得分产品回款明细','period':'','source_id':None,'quote':''},
+        'frequency':'定期报告披露后','next_check':'下一次取得产品收入和回款明细时',
+        'support_condition':'产品客户支付证据与收入确认一致','invalidate_condition':'客户验收后持续逾期',
+        'threshold_basis':'qualitative','next_action':'查阅附注并更新研究判断','status':'needs_baseline'}]
+    return value
+
 def source_run(run):
     run['research_sources']=[{'id':'web-product','kind':'web','title':'产品发布','url':'https://example.com/product','text':'产品名称及客户使用场景','published_at':'2026-09-01','read_status':'body_read'}]
     store.save_run(run)
@@ -128,7 +139,7 @@ def test_build_repairs_then_saves_once_and_retains_old_memo(run,monkeypatch):
     monkeypatch.setattr(deep.documents,'search_attached',lambda *args: {'snippets':[]})
     monkeypatch.setattr(deep.web_research,'search',lambda q,**kw: {'queries':q,'results':[],'limitations':['公开索引未找到新内容']})
     answers=iter([{'queries':['华宇软件 产品 客户'],'pdf_queries':['产品'],'focus':'商业化'},
-        {'queries':[],'gaps':['收入贡献未知']},candidate(),{'issues':['补充回款依据'],'requires_revision':True},candidate()])
+        {'queries':[],'gaps':['收入贡献未知']},tracked_candidate(),{'issues':['补充回款依据'],'requires_revision':True},tracked_candidate()])
     monkeypatch.setattr(deep,'model_json',lambda *a,**kw: (next(answers),{'model':'stub'}))
     result=deep.build(run['id'],'保存深度报告')
     updated=store.get_run(run['id'])
@@ -143,7 +154,7 @@ def test_build_repair_cannot_adopt_concurrently_published_report_as_base(run,mon
     monkeypatch.setattr(deep.documents,'search_attached',lambda *args: {'snippets':[]})
     monkeypatch.setattr(deep.web_research,'search',lambda q,**kw: {'queries':q,'results':[]})
     answers=iter([{'queries':['华宇软件 产品 客户'],'pdf_queries':['产品']},
-                  {'queries':[]},candidate(),{'issues':['需要补充反证'],'requires_revision':True},candidate()])
+                  {'queries':[]},tracked_candidate(),{'issues':['需要补充反证'],'requires_revision':True},tracked_candidate()])
     calls=[]
     def model(*args,**kwargs):
         calls.append(1)
@@ -288,7 +299,7 @@ def test_permitted_report_preserves_question_ledger_despite_model_edits(run,monk
     assert effective_rules(current)['no_question_writes'] and not effective_rules(current)['no_report']
     monkeypatch.setattr(questions,'plan',lambda *a,**kw:pytest.fail('question planning is forbidden'))
     monkeypatch.setattr(questions,'apply',lambda *a,**kw:pytest.fail('question updates are forbidden'))
-    draft=candidate()
+    draft=tracked_candidate() if operation=='build' else candidate()
     draft['question_answers']=[{'question_id':'model-invented-id','answer':'不得采纳的新答案'}]
     replies=[draft]
     if operation=='build':

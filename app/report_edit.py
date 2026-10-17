@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import re
 
 
-EDITORIAL_FIELDS = ('title', 'summary', 'stance', 'theses', 'sections', 'questions', 'limitations')
+EDITORIAL_FIELDS = ('title', 'summary', 'stance', 'theses', 'sections', 'questions', 'limitations', 'tracking_metrics')
 SECTION_NAMES = {
     'business': ('公司靠什么赚钱', '商业模式', '公司业务', '业务章节'),
     'industry': ('竞争与行业位置', '行业与竞争', '行业竞争', '行业章节'),
@@ -16,7 +16,8 @@ SECTION_NAMES = {
 }
 TOP_NAMES = {'title': ('标题', '报告名称'), 'summary': ('摘要', '核心结论'),
              'stance': ('研究立场',), 'questions': ('核实清单',),
-             'limitations': ('研究边界', '限制说明')}
+             'limitations': ('研究边界', '限制说明'),
+             'tracking_metrics': ('持续跟踪指标', '跟踪指标', '跟踪表', '监测指标')}
 SECTION_FIELDS = ('body', 'evidence_ids', 'status')
 THESIS_FIELDS = ('title', 'body', 'evidence_ids', 'counter_evidence', 'invalidate_if', 'status')
 EDIT = r'(?:修订|修改|改写|改正|纠正|调整|更新|重写|替换|润色|补充|改为|改成|完善|修正|改(?!善|变))'

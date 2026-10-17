@@ -108,7 +108,8 @@ def constraints(text):
     awaiting_confirmation = bool(re.search(r'(?:等待|待|等)(?:我|用户)(?:明确)?(?:确认|采用)(?:之后|后)(?:才|再)(?:可|能|实际)?(?:进行)?(?:计算|执行)', text))
     no_calculation = read_only or awaiting_confirmation or any(re.search(NEG + r'.{0,6}(?:计算|重算|估值)', c) for c in calculation_clauses)
     no_valuation = strict_read_only or (discussion_only and not proposal_requested) or any(re.search(NEG + r'(?:做|进行|保存)?估值', c) for c in clauses)
-    no_question_writes = read_only or any(re.search(NEG + r'.{0,5}(?:保存|修改|更新|建立|记录).{0,8}(?:问题|研究记录)', c) for c in clauses)
+    no_question_writes = read_only or any(re.search(NEG + r'.{0,5}(?:保存|修改|更新|建立|记录|追加).{0,8}(?:问题|研究记录|跟踪观察|跟踪指标|观察记录)', c) for c in clauses)
+    no_material_writes = read_only or any(re.search(NEG + r'.{0,5}(?:接入|挂载|上传|绑定|保存|登记|修改|删除).{0,8}(?:材料|资料|PDF|文件|文档|期间记录|期间底稿|财务期间)', c, re.I) for c in clauses)
     require_body = requires_body_read(text)
     reading_limits = read_limits(text)
     no_pdf_read = any(x == {'kind':'pdf'} for x in reading_limits)
@@ -118,7 +119,7 @@ def constraints(text):
     search_limit = (int(match[1]) if match[1].isdigit() else number.get(match[1], 2)) if match else None
     return dict(no_tools=no_tools, saved_only=saved_only, no_network=no_network, no_deep_research=no_deep_research, no_report=no_report,
                 no_calculation=no_calculation, no_per_share=no_per_share, no_valuation=no_valuation, no_question_writes=no_question_writes,
-                no_material_writes=read_only, no_pdf_read=no_pdf_read, no_web_read=no_web_read,
+                no_material_writes=no_material_writes, no_pdf_read=no_pdf_read, no_web_read=no_web_read,
                 read_restrictions=reading_limits, discussion_only=discussion_only,
                 require_body=require_body, search_limit=search_limit)
 

@@ -4,6 +4,15 @@ import uuid
 from . import store
 from .fact_state import verification
 
+def basis_fingerprint(run, fact_ids=()):
+    """Bind a scenario to its inputs and provenance, not the mutable run timestamp."""
+    import hashlib,json
+    facts=[{k:v for k,v in f.items() if k!='verification'} for f in run.get('facts',[]) if f.get('id') in fact_ids]
+    evidence_ids={i for f in facts for i in f.get('evidence_ids',[])}
+    basis={'request':{k:run.get('request',{}).get(k) for k in ('ticker','year','as_of')},
+           'facts':facts,'evidence':[e for e in run.get('evidence',[]) if e.get('id') in evidence_ids]}
+    return hashlib.sha256(json.dumps(basis,ensure_ascii=False,sort_keys=True,default=str).encode()).hexdigest()
+
 def field(key,label,unit="",required=True,minimum=None,maximum=None):
     return {"key":key,"label":label,"unit":unit,"required":required,"min":minimum,"max":maximum}
 
@@ -117,6 +126,7 @@ def calculate(run,method,inputs,origin="form",quotes=None):
         return x
     return strings({"id":uuid.uuid4().hex[:12],"method":method,"method_name":spec["name"],"created_at":store.now(),
                     "assumptions":values,"assumption_quotes":quotes or {},"origin":origin,"fact_ids":fact_ids,
+                    "basis_fingerprint":basis_fingerprint(run,fact_ids),
                     "formula":spec["formula"],"output":out,"notes":notes+["情景计算是输入假设的结果，并非投资评级或市场报价。"]})
 
 def save_result(run_id,method,inputs,origin="form",quotes=None):
@@ -158,4 +168,6 @@ def same_result(previous,current):
             except InvalidOperation: pass
         return value
     return all(canonical(previous.get(k))==canonical(current.get(k))
-               for k in ("method","assumptions","fact_ids","output","formula"))
+               for k in ("method","assumptions","fact_ids","output","formula")) and (
+        not previous.get('basis_fingerprint') or not current.get('basis_fingerprint') or
+        previous['basis_fingerprint']==current['basis_fingerprint'])

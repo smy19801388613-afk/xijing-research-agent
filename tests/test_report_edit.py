@@ -117,7 +117,9 @@ def test_program_merge_preserves_all_unauthorized_editorial_fields_and_provenanc
     merged=edits.preserve_unauthorized(base,candidate,normalized,scope)
     assert base==original and merged['summary']=='新摘要'
     for key in edits.EDITORIAL_FIELDS:
-        if key!='summary': assert merged[key]==base[key]
+        if key!='summary':
+            assert merged.get(key)==base.get(key)
+            assert (key in merged)==(key in base)
     assert merged['_report_input_identity']=={'revision':4}
     assert merged['_report_dependency_snapshot']=={'version':1}
     candidate['stance']='额外改动'
@@ -180,7 +182,9 @@ def test_refine_uses_patch_only_and_does_not_rewrite_summary_stance_or_ledger(sa
     updated=store.get_run(run['id'])
     assert result['revision']==original['report_revision']+1 and len(seen)==1
     for key in edits.EDITORIAL_FIELDS:
-        if key!='sections': assert updated['memo'][key]==original['memo'][key]
+        if key!='sections':
+            assert updated['memo'].get(key)==original['memo'].get(key)
+            assert (key in updated['memo'])==(key in original['memo'])
     for before,after in zip(original['memo']['sections'],updated['memo']['sections']):
         if before['key']!='catalysts': assert before==after
     assert updated['research_questions']==original['research_questions']
@@ -321,8 +325,14 @@ def test_full_build_does_not_drop_unmentioned_prior_review_issues(saved_research
     monkeypatch.setattr(deep.documents,'ensure_index',lambda _: [])
     monkeypatch.setattr(deep.documents,'search_attached',lambda *a: {'snippets':[]})
     monkeypatch.setattr(deep.web_research,'search',lambda qs,**kw: {'queries':qs,'results':[]})
+    generated=report()
+    generated['tracking_metrics']=[{'id':'cash','name':'现金回收','definition':'同口径经营现金流与客户回款',
+        'thesis':'现金回收','baseline':{'status':'missing','value':'尚缺回款明细','period':''},
+        'frequency':'定期披露后','next_check':'下一次定期报告披露后',
+        'support_condition':'现金回收改善','invalidate_condition':'回款持续逾期',
+        'threshold_basis':'qualitative','next_action':'核查附注','status':'needs_baseline'}]
     replies=iter([{'queries':['测试公司 产品'], 'pdf_queries':['产品']}, {'queries':[]},
-                  report(),{'issues':['新的持续盈利疑问'],'requires_revision':False}])
+                  generated,{'issues':['新的持续盈利疑问'],'requires_revision':False}])
     monkeypatch.setattr(deep,'model_json',lambda *a,**kw:(next(replies),{}))
     deep.build(run['id'],'完整研究并重写报告')
     review=store.get_run(run['id'])['memo']['review']

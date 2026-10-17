@@ -43,7 +43,10 @@ def dependency_snapshot(run, memo=None):
     snapshot = questions._question_snapshot(run, memo)
     for item in snapshot['questions'].values(): item.pop('revision', None)
     latest = {v['method']: v for v in run.get('valuation_history', [])}
+    from .research_extensions import dependencies
+    extensions = dependencies(run)
     return {'schema_version': 1, 'question_evidence': snapshot,
+            **({'research_extensions': extensions} if extensions else {}),
             'request': {k: run.get('request', {}).get(k) for k in ('ticker', 'year', 'as_of', 'document_id')},
             'facts': [{k: v for k, v in f.items() if k != 'verification'} for f in run.get('facts', [])],
             'calculations': deepcopy(run.get('calculations', [])),

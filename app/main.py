@@ -40,6 +40,10 @@ async def lifespan(app):
         with suppress(asyncio.CancelledError): await watcher
 
 app=FastAPI(title="析鲸AI · 对话投研 Agent",version=VERSION,lifespan=lifespan)
+from . import financial_periods, valuation_analysis, research_tracking
+app.include_router(financial_periods.router)
+app.include_router(valuation_analysis.router)
+app.include_router(research_tracking.router)
 
 @app.middleware("http")
 async def local_origin(request:Request,call_next):

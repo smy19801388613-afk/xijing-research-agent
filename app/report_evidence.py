@@ -105,6 +105,15 @@ def priorities(run, refs, drafts=()):
                 for binding in sequence(answer.get('bindings')):
                     if isinstance(binding, dict):
                         add(binding.get('source_id'), binding.get('quote'))
+        for metric in sequence(value.get('tracking_metrics')):
+            if isinstance(metric, dict):
+                for sid in sequence(metric.get('evidence_ids')):
+                    add(sid)
+                baseline = metric.get('baseline')
+                if isinstance(baseline, dict):
+                    for sid in sequence(baseline.get('evidence_ids')):
+                        add(sid, baseline.get('quote'))
+                    add(baseline.get('source_id'), baseline.get('quote'))
 
     for draft in drafts:
         report(draft)

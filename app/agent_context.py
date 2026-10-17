@@ -149,6 +149,9 @@ def bounded_context(chat, run=None, max_chars=18000):
     result['memo'] = _memo(run.get('memo'))
     result['valuations'] = _fit(list(reversed(run.get('valuation_history', [])[-4:])), 1800)
     result['report_valuation_status'] = _fit(report_valuation_status(run), 1600)
+    from .research_extensions import context as extension_context
+    extensions = extension_context(run)
+    if extensions: result['research_extensions'] = _fit(extensions, 4500)
     view = questions.snapshot(run)
     result['question_coverage'] = _coverage(view)
     # Exact source IDs and page locators remain addressable. There is one source
@@ -189,9 +192,129 @@ def compact_conversation(messages, max_chars=5000):
     return result
 
 
-def _tool_result(result, recent, preserve_read=False):
+EXTENSION_GROUPS = {
+    'get_tracking_metrics': 'tracking', 'record_tracking_observation': 'tracking',
+    'record_financial_periods': 'periods', 'analyze_financial_periods': 'periods',
+    'calculate_sensitivity': 'sensitivity', 'save_comparables': 'comparables',
+}
+
+
+def _analysis_prose(value, limit):
+    """Shorten prose only: never silently drop a metric, identity or numeric input."""
+    result = deepcopy(value)
+    prose = {'definition', 'thesis', 'support_condition', 'invalidate_condition', 'next_action',
+             'next_check', 'frequency', 'observation', 'reason', 'message', 'note', 'status_note',
+             'exclusion_reason', 'multiple_basis', 'price_basis', 'denominator_basis', 'restatement_note'}
+    while size(result) > limit:
+        found = []
+        def visit(node):
+            if isinstance(node, dict):
+                for key, child in node.items():
+                    if key in prose and isinstance(child, str) and len(child) > 60: found.append((len(child), node, key))
+                    if key == 'quote' and isinstance(child, str) and len(child) > 80: found.append((len(child), node, key))
+                    visit(child)
+            elif isinstance(node, list):
+                for child in node: visit(child)
+        visit(result)
+        if not found: break  # Bounded records/locators may exceed the soft target.
+        length, parent, key = max(found, key=lambda x: x[0])
+        if key == 'quote':
+            parent[key] = parent[key][:max(80, length // 2)]
+            parent['quote_excerpt_only'] = True
+        else: parent[key] = _clip(parent[key], max(60, length // 2))
+    return result
+
+
+def _tracking_projection(result):
+    output = _fields(result, ('artifact', 'report_identity', 'report_unchanged', 'error'))
+    output['metrics'] = []
+    for metric in result.get('metrics', [])[:12]:
+        item = _fields(metric, ('id', 'name', 'definition', 'thesis', 'frequency', 'next_check',
+            'support_condition', 'invalidate_condition', 'threshold_basis', 'threshold_confirmed', 'next_action', 'status'), 600)
+        baseline = metric.get('baseline') or {}
+        item['baseline'] = _fields(baseline, ('status', 'value', 'period', 'source_id'), 250)
+        item['baseline']['quote'] = str(baseline.get('quote') or '')[:500]
+        item['baseline']['quote_excerpt_only'] = bool(baseline.get('quote_excerpt_only') or len(str(baseline.get('quote') or '')) > 500)
+        output['metrics'].append(item)
+    observations = result.get('observations', [])
+    output['observations'] = []
+    for observation in observations[-3:]:
+        item = _fields(observation, ('id', 'metric_id', 'report_identity', 'recorded_at', 'observation',
+            'assessment', 'assessment_label', 'origin', 'semantic_status', 'source_id'), 500)
+        item['quote'] = str(observation.get('quote') or '')[:500]
+        item['quote_excerpt_only'] = bool(observation.get('quote_excerpt_only') or len(str(observation.get('quote') or '')) > 500)
+        item['source_snapshot'] = _fields(observation.get('source_snapshot') or {}, SOURCE_FIELDS, 200)
+        output['observations'].append(item)
+    output['metric_count'] = result.get('metric_count', len(result.get('metrics', [])))
+    output['observation_count'] = result.get('observation_count', len(observations))
+    output['previous_report_observation_count'] = result.get('previous_report_observation_count', len(result.get('previous_report_observations', [])))
+    output['context_note'] = '保留本版本全部跟踪指标和报告标识；原文可能节选，观察仅列最新三条。未展示历史不代表未记录，节选不代表重新阅读全文。'
+    return _analysis_prose(output, 10000)
+
+
+def _period_projection(result):
+    output = _fields(result, ('artifact', 'run_id', 'operation', 'request', 'note'), 400)
+    records = result.get('records', [])
+    already_projected = bool(result.get('analysis_counts'))
+    selected = records[:20] if already_projected else records[-20:][::-1]
+    output['records'] = [_fields(row, ('id', 'metric', 'label', 'year', 'quarter', 'period', 'period_type',
+        'period_end', 'value', 'unit', 'currency', 'scope', 'restatement', 'comparability_key', 'source_id',
+        'source_status', 'source_status_label', 'source_title', 'source_type', 'announced_date', 'locator', 'source_url'), 200)
+        for row in selected]
+    by_id = {row.get('id'): row for row in records}
+    for row in output['records']:
+        original = by_id.get(row.get('id'), {})
+        row['quote'] = str(original.get('quote') or '')[:180]
+        row['quote_excerpt_only'] = bool(original.get('quote_excerpt_only') or len(str(original.get('quote') or '')) > 180)
+    analysis = result.get('analysis') or {}
+    output['analysis'] = {key: deepcopy(analysis.get(key, [])[:12] if already_projected else analysis.get(key, [])[-12:][::-1]) for key in
+        ('comparisons', 'nonrecurring_bridges', 'signals', 'issues', 'quarters', 'cumulative', 'balances')}
+    # Derived numeric rows are small; remove only surplus rows, never truncate
+    # their inputs or change a null/blocked comparison into a calculated value.
+    counts = result.get('analysis_counts') or {key: len(rows) for key, rows in analysis.items() if isinstance(rows, list)}
+    output['analysis_counts'] = deepcopy(counts)
+    output['record_count'] = result.get('record_count', len(records))
+    output = _analysis_prose(output, 8000)
+    tables = [output['records']] + list(output['analysis'].values())
+    while size(output) > 8000:
+        candidates = [rows for rows in tables if len(rows) > 1]
+        if not candidates: break
+        max(candidates, key=size).pop()
+    output['context_note'] = '期间记录与分析是有界工作集，record_count/analysis_counts给出完整数量；省略不表示缺失。保留期间、单位、口径、公式及来源定位，派生结果不升级输入可信度。'
+    return output
+
+
+def _valuation_projection(result, group):
+    output = _fields(result, ('id', 'artifact', 'analysis_kind', 'revision', 'created_at', 'method',
+        'base_scenario_id', 'base_fingerprint', 'base_scenario_fingerprint', 'axes', 'envelope',
+        'fixed_assumptions', 'valid_cells', 'invalid_cells', 'stale', 'status_note',
+        'period_kind', 'period_label', 'valuation_date', 'currency', 'statistics', 'source_changed'), 400)
+    output['notes'] = [_clip(note, 300) for note in result.get('notes', [])[:6]]
+    if group == 'sensitivity':
+        cells = result.get('cell_preview')
+        if cells is None: cells = [cell for row in result.get('cells', []) for cell in row]
+        output['cell_preview'] = deepcopy(cells[:8])
+        output['cell_count'] = result.get('cell_count', len(cells))
+        output['context_note'] = '轴值、固定假设与包络完整保留；矩阵只展示部分单元格，结果单位由输出字段决定，非市场报价。'
+    else:
+        rows = result.get('rows', [])
+        output['rows'] = [_fields(row, ('company', 'ticker', 'multiple', 'multiple_value', 'included',
+            'exclusion_reason', 'verification', 'verification_label', 'price', 'denominator_per_share',
+            'multiple_basis', 'price_basis', 'denominator_basis', 'source_ids', 'source_refs',
+            'calculation', 'method', 'period_kind', 'period_label', 'valuation_date', 'currency'), 250) for row in rows[:15]]
+        output['row_count'] = result.get('row_count', len(rows))
+        output['context_note'] = '统计为完整样本结果，可比公司列表为有界摘要；来源关联不代表数值或经济可比性已经核验。'
+    return _analysis_prose(output, 6500)
+
+
+def _tool_result(result, recent, preserve_read=False, tool=None):
     if not isinstance(result, dict):
         return _clip(result, 800)
+    group = EXTENSION_GROUPS.get(tool)
+    if group and not result.get('error'):
+        if group == 'tracking': return _tracking_projection(result)
+        if group == 'periods': return _period_projection(result)
+        return _valuation_projection(result, group)
     item = _fields(result, ('artifact', 'run_id', 'revision', 'report_revision', 'id', 'document_id',
                            'proposal_id', 'status', 'error', 'summary', 'message', 'change_note',
                            'method', 'method_name', 'value', 'assumptions', 'result', 'note',
@@ -257,6 +380,7 @@ def compact_tool_results(results, max_chars=10000):
     # This is a soft input target, not another decision or execution limit.
     comparison_remaining, comparison_reads = 16000, 0
     full_page_keys, read_inventory, inventory_keys = set(), [], set()
+    current_analyses = set()
     for row in reversed(results or []):
         inherited = row.get('read_inventory', {}).get('sources', [])
         for source in _read_sources(row) + inherited:
@@ -290,7 +414,11 @@ def compact_tool_results(results, max_chars=10000):
                         read_result[key] = [s for s in read_result[key] if s in fresh]
                 comparison_remaining -= size(fresh)
                 comparison_reads += 1
-            item['result'] = _tool_result(read_result, len(unique) < 2, full_read)
+            item['result'] = _tool_result(read_result, len(unique) < 2, full_read, row.get('tool'))
+            group = EXTENSION_GROUPS.get(row.get('tool'))
+            if group and group not in current_analyses and isinstance(read_result, dict) and not read_result.get('error'):
+                item['structured_analysis_observation'] = True
+                current_analyses.add(group)
             if full_read:
                 item['full_read_observation'] = True
                 preserved_read = True
@@ -306,7 +434,7 @@ def compact_tool_results(results, max_chars=10000):
         seen[signature] = item
         unique.append(item)
     # Old successful artifacts and errors are more important than old read excerpts.
-    important = [r for r in unique[2:] if r.get('error') or (isinstance(r.get('result'), dict) and
+    important = [r for r in unique[2:] if r.get('structured_analysis_observation') or r.get('error') or (isinstance(r.get('result'), dict) and
                  (r['result'].get('error') or r['result'].get('artifact') not in (None, 'document_read', 'document_search', 'web_search')))]
     ordered = unique[:2] + important + [r for r in unique[2:] if r not in important]
     def state_record(row):
@@ -318,7 +446,7 @@ def compact_tool_results(results, max_chars=10000):
     # most of this input. This prevents a short context from implying a report,
     # attachment or valuation was never saved.
     for row in ordered[2:]:
-        if row.get('full_read_observation') or not state_record(row) or not isinstance(row.get('result'), dict):
+        if row.get('full_read_observation') or row.get('structured_analysis_observation') or not state_record(row) or not isinstance(row.get('result'), dict):
             continue
         original = row['result']
         row['result'] = _fields(original, ('artifact', 'run_id', 'revision', 'report_revision', 'id',
@@ -327,7 +455,7 @@ def compact_tool_results(results, max_chars=10000):
             if isinstance(original.get(key), dict):
                 row['result'][key] = _fields(original[key], ('id', 'run_id', 'title', 'method', 'state', 'status'), 150)
         row['context_summary'] = True
-    protected = [r for r in ordered if r.get('full_read_observation') or r.get('validation_feedback') or state_record(r)]
+    protected = [r for r in ordered if r.get('full_read_observation') or r.get('structured_analysis_observation') or r.get('validation_feedback') or state_record(r)]
     ordinary = [r for r in ordered if r not in protected]
     bounded = _fit(ordinary, max(500, max_chars - size(protected)))
     if not isinstance(bounded, list):
