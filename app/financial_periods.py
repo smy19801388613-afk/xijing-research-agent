@@ -7,6 +7,7 @@ from collections import defaultdict
 from datetime import date
 from decimal import Decimal
 import hashlib
+import json
 import re
 import uuid
 
@@ -27,7 +28,7 @@ METRICS = {
 }
 UNITS = {'元': Decimal(1), '千元': Decimal(1000), '万元': Decimal(10000), '亿元': Decimal(100000000)}
 PERIODS = {'Q1': 1, 'Q2': 2, 'H1': 2, 'Q3': 3, '9M': 3, 'Q4': 4, 'FY': 4}
-STATUS_LABELS = {'source_matched': '原文已匹配 · 数值口径待复核', 'user_unverified': '用户录入 · 未核验', 'source_changed': '来源变化 · 暂停计算'}
+STATUS_LABELS = {'source_matched': '原文已匹配 · 数值口径待复核', 'fact_ledger': '已存事实复用 · 保留原核验状态', 'user_unverified': '用户录入 · 未核验', 'source_changed': '来源变化 · 暂停计算'}
 NOTE = '原文匹配只证明摘录来自已读材料，不代表金额、期间、单位或归因已经核验；手工录入及其计算结果始终标为未核验。'
 
 
@@ -56,7 +57,55 @@ def _catalog(run):
     # Exclude them while obtaining originals, so extension exporters can also
     # revalidate this ledger without recursively rebuilding their own sources.
     originals = {**run, 'financial_period_records': [], 'valuation_sensitivity_history': [], 'comparable_analyses': []}
-    return catalog(originals)
+    refs = catalog(originals)
+    for fact in run.get('facts', []):
+        try:
+            source = _fact_reference(fact, run, refs)
+        except ValueError:
+            continue
+        refs[source['id']] = source
+    return refs
+
+
+def _fact_reference(fact, run, refs):
+    """A deterministic ledger view, not an invented excerpt of a PDF amount."""
+    from .fact_state import verification
+    from .evidence_policy import source_fingerprint
+    if fact.get('metric') not in ('revenue', 'n_income_attr_p', 'n_cashflow_act'):
+        raise ValueError('事实导入仅支持年度营业收入、归母净利润和经营现金流')
+    if fact.get('period_type') != 'annual' or fact.get('currency') != 'CNY' or fact.get('scope') != 'consolidated':
+        raise ValueError('事实导入需要明确的合并年度、人民币口径，不能推测期间、币种或报表范围')
+    state = verification(fact, run.get('evidence', []), run['request']['as_of'])
+    if not state['usable_for_calculation'] or state['state'] in ('conflict', 'ocr_pending', 'missing', 'unverified'):
+        raise ValueError('事实不可用于期间计算：' + state['label'])
+    announced = _day(fact.get('announced_date'), '事实公告日期')
+    if announced > _day(run['request']['as_of'], '研究截止日') or announced > date.today().isoformat():
+        raise ValueError('事实公告日期晚于研究截止日或今天')
+    source_ids = fact.get('evidence_ids') or []
+    originals = [refs.get(sid) for sid in source_ids]
+    if not originals or any(not s or not s.get('text') or not s.get('eligibility', {}).get('supports_answer') for s in originals):
+        raise ValueError('事实缺少可用的实际原始来源，或原始来源缺失、冲突、OCR待复核、日期无效')
+    dates = [_day(s.get('published_at') or s.get('announced_date'), '原始来源公告日期') for s in originals]
+    if announced not in dates or any(d > _day(run['request']['as_of'], '研究截止日') or d > date.today().isoformat() for d in dates):
+        raise ValueError('事实公告日期与实际原始来源不一致或来源晚于截止日')
+    value = number(fact.get('value'))
+    original = number(fact.get('original_value'))
+    original_unit = fact.get('original_unit')
+    if original is not None and original_unit in UNITS and original * UNITS[original_unit] != value:
+        raise ValueError('事实原始金额及单位与已存元金额不一致，需先核对事实')
+    fingerprints = {s['id']: source_fingerprint(s, run) for s in originals}
+    semantic = {k: fact.get(k) for k in ('id', 'metric', 'year', 'value', 'original_value', 'original_unit',
+        'currency', 'scope', 'period_type', 'status', 'announced_date', 'evidence_ids', 'cross_check_value', 'extraction')}
+    fingerprint = hashlib.sha256(json.dumps({'fact': semantic, 'sources': fingerprints}, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    text = (f"已保存年度财务事实 {fact['id']}：{fact['year']} 年 {METRICS[fact['metric']][0]}；"
+            f"金额 {value} 元；币种 CNY；合并报表；全年累计；实际来源公告日期 {announced}；"
+            f"原核验状态 {state['label']}。这是事实账本的确定性映射，不是重新摘录PDF，也不升级原来源可信度。依据指纹 {fingerprint}")
+    return {'id': 'fact-ledger-' + fact['id'], 'kind': 'financial_fact', 'title': f"{fact['year']} 年 {METRICS[fact['metric']][0]} · 已存事实",
+            'text': text, 'published_at': announced, 'fact_id': fact['id'], 'value': str(value),
+            'fact_metric': fact['metric'], 'fact_year': fact['year'], 'fact_status': fact.get('status'),
+            'fact_verification': state, 'original_source_ids': list(source_ids), 'original_source_fingerprints': fingerprints,
+            'eligibility': {'supports_answer': True, 'supports_claim': False, 'supports_inference': True,
+                            'reasons': ['仅复用已存年度事实，原始来源及原核验状态保留；不是新增独立证据']}}
 
 
 def _source(record, run, refs, origin):
@@ -129,12 +178,57 @@ def normalize(record, run, refs=None, origin='human'):
         if value not in seen: raise ValueError('原始金额未在绑定摘录中找到，请保留原文金额及单位，不要先换算')
     units_seen = set(re.findall(r'亿元|万元|千元|(?<![亿万千美港欧日])元', source['quote']))
     if len(units_seen) == 1 and unit not in units_seen: raise ValueError('录入单位与原文摘录单位不一致，请核对后保存')
+    imported = (refs if refs is not None else _catalog(run)).get(source['source_id'], {}) if source['source_type'] == 'existing' else {}
+    fact_meta = {}
+    if imported.get('fact_id'):
+        if (metric, year, period, period_type, unit, currency, scope, value) != (
+                imported['fact_metric'], imported['fact_year'], 'FY', 'cumulative', '元', 'CNY', 'consolidated', number(imported['value'])):
+            raise ValueError('已存事实只能按其原指标、年度、金额映射为 FY 累计记录，不允许改写金额或口径')
+        source['source_status'] = 'fact_ledger'
+        fact_meta = {'imported_fact_id': imported['fact_id'], 'imported_fact_status': imported['fact_status'],
+                     'imported_fact_verification': imported['fact_verification'],
+                     'original_source_ids': imported['original_source_ids']}
     return {'id': record.get('id') or 'fp-' + uuid.uuid4().hex[:12], 'metric': metric, 'label': METRICS[metric][0],
             'kind': kind, 'year': year, 'period': period, 'quarter': quarter, 'period_type': period_type,
             'period_end': end, 'value': str(value), 'unit': unit, 'value_base': str(value * UNITS[unit]),
             'currency': currency, 'scope': scope, 'attribution': 'attributable' if metric in ('n_income_attr_p', 'deducted_profit') else 'all_owners',
             'restatement': restatement, 'restatement_note': restatement_note, 'comparability_key': comparable,
-            **source, 'origin': origin, 'recorded_at': store.now()}
+            **source, **fact_meta, 'origin': origin, 'recorded_at': store.now()}
+
+
+def import_facts(run_id, fact_ids, origin='model'):
+    """Atomically reuse supported annual facts without model-transcribed numbers."""
+    if (not isinstance(fact_ids, list) or not 1 <= len(fact_ids) <= 150
+            or any(not isinstance(sid, str) or not sid.strip() for sid in fact_ids)
+            or len(set(fact_ids)) != len(fact_ids)):
+        raise ValueError('fact_ids 必须为 1—150 个不重复的已有事实 ID')
+    if origin not in ('model', 'human'): raise ValueError('导入来源须为 model 或 human')
+    def change(run):
+        refs = _catalog(run)
+        facts = {f['id']: f for f in run.get('facts', [])}
+        known = {r['id']: r for r in run.get('financial_period_records', [])}
+        prepared = []
+        for fid in fact_ids:
+            if fid not in facts: raise ValueError('事实 ID 不存在：' + fid)
+            fact = facts[fid]
+            source = _fact_reference(fact, run, refs)
+            identity = 'fp-fact-' + hashlib.sha256(fid.encode()).hexdigest()[:16]
+            raw = {'id': identity, 'metric': fact['metric'], 'year': fact['year'], 'period': 'FY',
+                   'period_type': 'cumulative', 'value': fact['value'], 'unit': '元', 'currency': 'CNY',
+                   'scope': 'consolidated', 'source_type': 'existing', 'source_id': source['id'],
+                   'quote': source['text'], 'announced_date': source['published_at']}
+            prepared.append(normalize(raw, run, refs, origin))
+        for row in prepared:
+            old = known.get(row['id'])
+            if old:
+                ignored = {'recorded_at', 'history', 'origin'}
+                if {k:v for k,v in old.items() if k not in ignored} == {k:v for k,v in row.items() if k not in ignored}:
+                    continue
+                row['history'] = old.get('history', []) + [{k:v for k,v in old.items() if k != 'history'}]
+            known[row['id']] = row
+        if len(known) > 500: raise ValueError('单项研究最多保存 500 条期间记录')
+        run['financial_period_records'] = list(known.values())
+    return snapshot(store.update_run(run_id, change))
 
 
 def save_records(run_id, records, origin='human'):
@@ -171,7 +265,8 @@ def _basis(r):
 
 def _status(rows):
     states = {r['source_status'] for r in rows}
-    return 'source_changed' if 'source_changed' in states else 'user_unverified' if 'user_unverified' in states else 'source_matched'
+    return ('source_changed' if 'source_changed' in states else 'user_unverified' if 'user_unverified' in states
+            else 'fact_ledger' if 'fact_ledger' in states else 'source_matched')
 
 
 def _point(rows, identifier, label, value, formula, **extra):
@@ -306,6 +401,9 @@ def get_financial_periods(run_id: str):
 
 @router.post('/api/runs/{run_id}/financial-periods')
 def post_financial_periods(run_id: str, payload: dict = Body(...)):
+    if 'fact_ids' in payload:
+        if 'records' in payload: raise ValueError('records 与 fact_ids 不能同时提供；导入已存事实无需重写金额和摘录')
+        return import_facts(run_id, payload['fact_ids'], origin='human')
     return save_records(run_id, payload.get('records'), origin='human')
 
 

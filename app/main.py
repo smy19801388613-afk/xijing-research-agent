@@ -157,6 +157,15 @@ def create(request:RunRequest):
 @app.get("/api/runs/{run_id}/valuation-options")
 def valuation_options(run_id:str): return valuation.options(store.get_run(run_id))
 
+@app.get('/api/runs/{run_id}/market-quote')
+def market_quote(run_id:str):
+    return store.get_run(run_id).get('market_snapshot') or {'status':'missing','gaps':['尚未获取市场报价']}
+
+@app.post('/api/runs/{run_id}/market-quote')
+def refresh_market_quote(run_id:str):
+    from .market_data import fetch_quote
+    return fetch_quote(run_id)
+
 @app.post("/api/runs/{run_id}/valuations")
 def calculate_valuation(run_id:str,request:ValuationRequest):
     return valuation.save_result(run_id,request.method,request.assumptions)

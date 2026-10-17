@@ -68,6 +68,9 @@ def referenced_valuation_ids(memo):
     ids = [i for item in memo.get("sections", []) + memo.get("theses", [])
            for i in item.get("evidence_ids", []) if isinstance(i, str)]
     ids += [s.get("id", "") for s in memo.get("sources", []) if s.get("kind") == "valuation"]
+    recommendation = memo.get('investment_recommendation') or {}
+    ids += recommendation.get('evidence_ids', [])
+    ids += ['valuation-' + i.removeprefix('valuation-') for i in recommendation.get('valuation_scenario_ids', []) if isinstance(i, str)]
     return list(dict.fromkeys(i.removeprefix("valuation-") for i in ids if i.startswith("valuation-")))
 
 

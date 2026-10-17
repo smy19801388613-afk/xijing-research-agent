@@ -23,6 +23,6 @@ export default function ResearchDocuments({run,ensureChat,onDone,disabled}:any){
   </>
 }
 
-export function DocumentLinks({documents}:any){
-  return <div className="attached-documents"><h4>已接入材料 · {documents.length}</h4>{documents.length?documents.map((d:any)=><a key={d.id} href={'/api/documents/'+d.id+'/file'} target="_blank" rel="noreferrer"><FileText size={16}/><span>{d.title}<small>{d.page_count||'已接入'}{d.page_count?' 页':''} · {d.index_status==='needs_ocr'?'按页 OCR':d.kind==='public_report'?'公开披露':'本地材料'}</small></span><ExternalLink size={12}/></a>):<p>在输入框下方上传 PDF、接入资料，或让 Agent 查找年报。</p>}</div>
+export function DocumentLinks({documents,loading=false,error='',onRetry}:any){
+  return <div className="attached-documents" aria-busy={loading}><h4>已接入材料{documents.length||(!loading&&!error)?' · '+documents.length:''}</h4>{documents.length?documents.map((d:any)=><a key={d.id} href={'/api/documents/'+d.id+'/file'} target="_blank" rel="noreferrer"><FileText size={16}/><span>{d.title}<small>{d.page_count||'已接入'}{d.page_count?' 页':''} · {d.index_status==='needs_ocr'?'按页 OCR':d.kind==='public_report'?'公开披露':'本地材料'}</small></span><ExternalLink size={12}/></a>):loading?<p role="status">正在加载已接入材料…</p>:!error&&<p>在输入框下方上传 PDF、接入资料，或让 Agent 查找年报。</p>}{error&&<p role="alert">材料列表暂时无法更新。{onRetry&&<button type="button" className="text-link" onClick={onRetry}>重试加载</button>}</p>}</div>
 }

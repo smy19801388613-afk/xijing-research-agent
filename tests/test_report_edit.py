@@ -3,6 +3,7 @@ from copy import deepcopy
 import pytest
 
 from app import deep_research as deep, report_edit as edits, review_state, store
+from recommendation_fixture import watch_recommendation
 
 
 def report():
@@ -53,6 +54,99 @@ def test_full_rewrite_and_continuation_scope():
     assert not edits.resolve_scope(current,report()).limited
     current=chat_for('完整重写报告。','现在只修改标题。')
     assert edits.resolve_scope(current,report()).paths==('/title',)
+
+
+SMIC_RECOVERY = ('继续未完成部分，复用已保存的年报、网络正文、估值和未发布的最新草稿，不重新联网，不重做整套深研，也不重算已采用估值。'
+    '先把系统已有2025、2024年度收入、归母净利润、经营现金流六项事实直接导入财务期间底稿，保留原值、来源与核验状态，然后分析年度同比。'
+    '再完成原定敏感性：以方案98573c0a所保存的修正股数估值为基准，增长轴0、16.5、30，PE倍数轴30、40、50；其他参数保持不变。'
+    '最后依据已读证据修复未发布草稿并保存完整买方备忘录，必须包含明确投资建议，分别写未持仓者和若已持有者的当前动作、期限、风险、反证与改变判断的条件；不足以决定时写清具体缺口。'
+    '每项跟踪基线只填一个原始量和包含该量的连续摘录，不能把不同来源的资本开支和经营现金流合成一个未经计算的覆盖率。'
+    '请保留已完成的反方审阅与来源，先解决阻止保存的具体错误再交付，不再重新扩展研究范围。')
+
+
+@pytest.mark.parametrize('published',[report(), {'title':'旧财务简报','summary':'三项指标摘要','theses':[]}])
+def test_actual_full_draft_recovery_does_not_patch_old_published_valuation_section(published):
+    assert not edits.resolve_scope(chat_for(SMIC_RECOVERY),published).limited
+
+
+@pytest.mark.parametrize('text',[
+    '完整重写报告，估值参数保持不变。',
+    '复用未发布草稿并保存完整买方备忘录，其他参数保持不变。',
+    '以修正股数估值为基准，最后修复并保存完整买方备忘录。',
+    '沿用既有估值情景，修复完整研究备忘录，增长假设和PE倍数保持不变。',
+    '沿用既有估值情景并生成完整报告。',
+    '保存完整买方备忘录且其他参数保持不变。',
+])
+def test_preserving_calculation_parameters_does_not_limit_full_report(text):
+    assert not edits.resolve_scope(chat_for(text),report()).limited
+    assert not edits.resolve_scope(chat_for('只修改摘要。',text),report()).limited
+
+
+@pytest.mark.parametrize('text',[
+    '只改估值章节，其他参数不变。',
+    '请修改估值章节中的股本引用。',
+    '只改估值章节并保存完整买方备忘录，其他内容不变。',
+])
+def test_real_valuation_section_edits_remain_limited(text):
+    scope=edits.resolve_scope(chat_for(text),report())
+    assert scope.limited and all(p.startswith('/sections/valuation/') for p in scope.paths)
+
+
+YILI_COHERENCE = ('第3版投资建议已保存。本轮仅修改研究立场、估值章节正文和第3条估值论点正文，使旧叙述与已保存投资建议一致，然后保存新版本。'
+    '具体问题：旧研究立场说不能形成持有结论，而建议栏已区分未持仓者不新建仓、若已持有则可继续持有但暂不加仓；请保留这种条件性区分。'
+    '旧估值正文和对应论点说“企业价值字段为null，不能直接比较”，应改为PE每股股权价值与同币种股价在单位上可比较，但假设未经独立可比和预测验证，不能因此确认低估或给出目标价；企业价值桥接缺失不影响PE每股计算。'
+    '\n其余正文、标题、摘要、引用、投资建议栏、跟踪指标和已保存估值保持不变。不联网；不新增计算或扩大研究。请直接用 refine_investment_memo 完成局部保存，告知新版本和具体修改。')
+SMIC_COHERENCE = ('现在允许计算财务期间同比和敏感性，保留已有估值不重新计算。先调用 analyze_financial_periods，按实际底稿报告2025/2024营业收入、归母净利润、经营现金流年度同比，不能把主营或分部数字替换营业收入。'
+    '\n再计算并保存敏感性，以已保存修正股数情景00337cfd4156为基准：增长轴0、16.5、30，PE倍数轴30、40、50。轴值使用我的这句原话，其他估值参数保持原样。'
+    '\n然后仅修改投资建议栏、估值章节正文和第4条估值论点正文中的市值口径错误并保存：你已读年报第111页明确人民币普通股1,999,562,549股、香港上市普通股6,000,845,486股，总数8,000,408,035股。'
+    '因此102.66元A股收盘价乘全部股份不能称实际A/H合计总市值，应删除这项总市值推断，保留每股情景与A股价的同币种比较及探索假设限制，不新增未取得的H股价格或汇率。'
+    '投资建议、期限、动作与其他内容依据原稿保留，必要时只修正该口径叙述。其余标题、摘要、研究立场、正文、跟踪指标、引用和已保存估值保持不变。'
+    '不联网，不扩展研究。完成后告知保存版本与实际完成结果。')
+
+
+def four_thesis_report():
+    value = report()
+    value['theses'] += [{**deepcopy(value['theses'][0]), 'title': '估值假设'},
+                        {**deepcopy(value['theses'][0]), 'title': '估值与风险'}]
+    value['investment_recommendation'] = {'summary': '原建议', 'action': 'watch'}
+    value['valuation_context'] = {'scenarios': [{'id': 'retained', 'output': {'price': '12'}}]}
+    return value
+
+
+@pytest.mark.parametrize('text,paths', [
+    (YILI_COHERENCE, {'/stance', '/sections/valuation/body', '/theses/2/body'}),
+    (SMIC_COHERENCE, {'/investment_recommendation', '/sections/valuation/body', '/theses/3/body'}),
+])
+def test_actual_coherence_requests_cover_exactly_three_requested_fields(text, paths):
+    base = four_thesis_report()
+    scope = edits.resolve_scope(chat_for(text), base)
+    assert set(scope.paths) == paths
+    values = {p: {'summary': '更正市值口径', 'action': 'watch'} if p == '/investment_recommendation'
+              else '已修正：PE每股计算不依赖EV桥，A股价乘全部股份不是A/H实际总市值。' for p in paths}
+    candidate = edits.apply_patch(base, {'edits': [{'path': p, 'value': v} for p, v in values.items()]}, scope)
+    assert edits.editable_values(candidate, scope) == values
+    for path in edits._all_paths(base) - paths:
+        assert edits._get(candidate, path) == edits._get(base, path)
+    assert candidate['valuation_context'] == base['valuation_context']
+    assert base == four_thesis_report()
+
+
+@pytest.mark.parametrize('object_name', ['已保存估值', '已保存的估值', '已有估值', '已采用估值',
+                                        '估值结果', '估值计算结果', '估值情景', '估值参数'])
+def test_protecting_calculations_in_mixed_list_does_not_freeze_authorized_prose(object_name):
+    text = f'只修改估值章节正文。其余正文、标题、摘要、引用和{object_name}保持不变。'
+    assert edits.resolve_scope(chat_for(text), report()).paths == ('/sections/valuation/body',)
+
+
+@pytest.mark.parametrize('object_name', ['估值', '已保存估值章节', '已保存的估值正文', '估值结果的正文'])
+def test_bare_or_explicit_valuation_prose_still_remains_protected(object_name):
+    scope = edits.resolve_scope(chat_for(f'完整重写报告。{object_name}保持不变。'), report())
+    assert scope.limited and '/sections/valuation/body' not in scope.paths
+
+
+def test_named_valuation_thesis_and_reference_do_not_authorize_other_theses_or_section():
+    scope = edits.resolve_scope(chat_for('仅修改第3条估值论点正文。对应论点应改为新的条件性说明。'), four_thesis_report())
+    assert scope.paths == ('/theses/2/body',)
 
 
 def test_replacement_content_does_not_expand_scope_or_turn_theme_into_section_target():
@@ -167,6 +261,28 @@ def set_request(chat,text):
     return store.get_conversation(chat['id'])
 
 
+def test_full_recovery_uses_unpublished_seven_section_draft_over_legacy_brief(saved_research,monkeypatch):
+    run,chat=saved_research
+    brief={'title':'旧财务简报','summary':'三项财务数据','theses':[]}
+    store.update_run(run['id'],lambda value:value.update(memo=deepcopy(brief)))
+    chat=set_request(chat,SMIC_RECOVERY)
+    unpublished=report();unpublished['investment_recommendation']=watch_recommendation()
+    working={'working_draft':deepcopy(unpublished),'review':{'issues':[]},'attempt_id':'synthetic-attempt',
+             'stage':'repaired_draft','unpublished':True}
+    monkeypatch.setattr(deep.research_draft,'select_working_draft',lambda *args:deepcopy(working))
+    payloads=[]
+    def model(system,payload,*args,**kwargs):
+        payloads.append(deepcopy(payload))
+        assert 'allowed_edit_paths' not in payload and len(payload['working_draft']['sections'])==7
+        return deepcopy(unpublished),{'model':'stub'}
+    monkeypatch.setattr(deep,'model_json',model)
+    result=deep.refine(run['id'],SMIC_RECOVERY,chat)
+    saved=store.get_run(run['id'])
+    assert result['artifact']=='report' and len(payloads)==1
+    assert len(saved['memo']['sections'])==7 and saved['memo']['investment_recommendation']['action']=='watch'
+    assert saved['memo_revisions'][-1]['memo']==brief
+
+
 def test_refine_uses_patch_only_and_does_not_rewrite_summary_stance_or_ledger(saved_research,monkeypatch):
     run,chat=saved_research
     chat=set_request(chat,'仅修正 catalysts 中的一处时态，其他已核对的正文和估值保持不变。')
@@ -191,6 +307,46 @@ def test_refine_uses_patch_only_and_does_not_rewrite_summary_stance_or_ledger(sa
     review=updated['memo']['review']
     assert review['issues'][0]['text']=='现金回收仍缺乏独立证明'
     assert review['issues'][0]['status']=='needs_review' and not review['independent_review_performed']
+
+
+def test_title_only_edit_explicitly_restores_real_archived_review_without_old_prose(saved_research,monkeypatch):
+    run, chat = saved_research
+    chat = set_request(chat, '只修改报告标题，并恢复此前实际反方审阅意见到审阅区；其余正文和投资建议保持不变。')
+    attempt = {'id': '2026-10-16T10:01:00+00:00', 'started_at': '2026-10-16T10:01:00+00:00',
+               'run_id': run['id'], 'chat_id': chat['id'], 'turn_id': 'archived-turn', 'task_turn_id': 'archived-turn',
+               'step_id': 'archived-step', 'base_report_revision': 1,
+               'draft': {'title': '旧草稿标题', 'summary': '绝不能回滚的新旧差异'},
+               'review': {'issues': ['历史A/H股份口径疑问', '历史资本开支疑问']}}
+    store.update_run(run['id'], lambda r: r.update(report_revision=4,
+        memo_updated_at='2026-10-16T11:00:00+00:00', deep_research_attempts=[deepcopy(attempt)]))
+    def add_audit(c):
+        c['turn_contexts']['archived-turn'] = {'run_id': run['id'], 'task_turn_id': 'archived-turn'}
+        c['steps'].append({'id': 'archived-step', 'turn_id': 'archived-turn', 'tool': 'build_investment_memo',
+                          'state': 'failed', 'started_at': '2026-10-16T10:00:00+00:00',
+                          'finished_at': '2026-10-16T10:03:00+00:00'})
+    store.update_conversation(chat['id'], add_audit)
+    before = store.get_run(run['id'])
+    def model(system, payload, *args, **kwargs):
+        assert payload['allowed_edit_paths'] == ['/title']
+        assert 'working_draft' not in payload
+        assert len(payload['prior_review_issues']) == 3
+        assert payload['historical_review_origins'][0]['attempt_id'] == attempt['id']
+        return {'edits': [{'path': '/title', 'value': '带历史审阅的当前报告'}]}, {'model': 'stub'}
+    monkeypatch.setattr(deep, 'model_json', model)
+    result = deep.refine(run['id'], '模型工具参数不能代替用户授权', chat)
+    after = store.get_run(run['id'])
+    assert result['revision'] == 5
+    for field in edits.EDITORIAL_FIELDS:
+        if field != 'title':
+            assert after['memo'].get(field) == before['memo'].get(field)
+    review = after['memo']['review']
+    assert len(review['issues']) == 3 and all(i['status'] == 'needs_review' for i in review['issues'])
+    assert review['independent_review_performed'] is False
+    assert review['recovered_from_unpublished_attempts'][0]['attempt_id'] == attempt['id']
+    assert '未恢复旧稿正文' in review['semantic_status']
+    assert after['deep_research_attempts'][0] == attempt
+    assert after['deep_research_attempts'][-1]['recovered_review_issue_count'] == 2
+    assert after['deep_research_attempts'][-1].get('resumed_from_attempt_id') is None
 
 
 def test_refine_rejects_two_out_of_scope_model_outputs_without_save(saved_research,monkeypatch):
@@ -326,6 +482,7 @@ def test_full_build_does_not_drop_unmentioned_prior_review_issues(saved_research
     monkeypatch.setattr(deep.documents,'search_attached',lambda *a: {'snippets':[]})
     monkeypatch.setattr(deep.web_research,'search',lambda qs,**kw: {'queries':qs,'results':[]})
     generated=report()
+    generated['investment_recommendation']=watch_recommendation()
     generated['tracking_metrics']=[{'id':'cash','name':'现金回收','definition':'同口径经营现金流与客户回款',
         'thesis':'现金回收','baseline':{'status':'missing','value':'尚缺回款明细','period':''},
         'frequency':'定期披露后','next_check':'下一次定期报告披露后',

@@ -5,7 +5,8 @@ import {ValuationResult,AssumptionChips} from './ValuationLab';
 import ResearchDocuments,{DocumentLinks} from './ResearchDocuments';
 import ResearchText from './ResearchText';
 import ExecutionBudget,{defaultBudget,normalizeBudget} from './ExecutionBudget';
-const toolNames:any={plan_research_questions:'建立研究问题',update_research_question:'保存问题证据',search_company:'查找公司',start_research:'建立财务底稿',fetch_annual_report:'获取公开年报',attach_document:'接入研究材料',read_document:'查阅 PDF 原文',search_documents:'检索披露原文',web_search:'联网搜索',search_web:'联网搜索',read_webpage:'阅读网页',read_public_pdf:'查阅公开公告PDF',read_web_page:'阅读网页',read_web:'阅读网页',build_investment_memo:'撰写深度研究',refine_investment_memo:'依据原文修订报告',valuation_options:'比较估值方法',calculate_valuation:'计算估值情景',propose_valuation:'提出估值方案',calculate_proposal:'计算选定方案',revise_report:'修订研究报告'};
+import {createDocumentLoader,documentLoadKey,type DocumentState} from './chatDocuments';
+import {toolLabel} from './toolNames';
 const deepResearchPrompt='请围绕当前公司开展深度买方研究：联网搜索行业、竞争格局、最新经营进展与风险，阅读关键原文并结合财务底稿、年报，检验投资论点和反证，讨论估值适用条件、催化剂与判断失效条件，最后生成并保存完整研究备忘录。明确资料日期、来源、推断和未解决的问题；缺失数据不要编造。';
 function sourceKey(url:string){try{const u=new URL(url);u.protocol='https:';u.hash='';Array.from(u.searchParams.keys()).filter(k=>k.startsWith('utm_')).forEach(k=>u.searchParams.delete(k));return u.toString().replace(/\/$/,'')}catch{return url}}
 function observedSources(steps:any[],message=''){
@@ -46,7 +47,7 @@ function Coverage({value}:any){
   </div>
 }
 function WebReferences({sources}:any){return <div className="web-references">{sources.filter((s:any)=>/^https?:\/\//i.test(s.url||'')).map((s:any,i:number)=><a href={s.url} target="_blank" rel="noopener noreferrer" key={s.id||s.url||i}><Globe2 size={15}/><span>{s.title||s.url}<small>{s.published_at||'日期未确认'}{s.read_status?' · '+(({read:'已读原文',article_text:'已读原文',public_pdf_text:'已读PDF原文',pdf_link_only:'PDF链接，未读正文',failed:'未取得正文',completed:'已读原文',body_read:'已读原文',snippet_only:'搜索摘要',search_snippet:'搜索摘要'} as any)[s.read_status]||'待查阅'):''}</small></span><ExternalLink size={12}/></a>)}</div>}
-const constraintNames:any={saved_only:'只用已保存材料',no_network:'不联网',no_report:'不修改报告',no_calculation:'不计算估值',no_valuation:'不做估值',require_body:'核对原文',no_tools:'不调用工具',no_question_writes:'不修改问题记录'};
+const constraintNames:any={saved_only:'只用已保存材料',no_network:'不联网',no_report:'不修改报告',no_calculation:'不执行计算',no_valuation_recalculation:'保留已有估值',no_valuation:'不做估值',require_body:'核对原文',no_tools:'不调用工具',no_question_writes:'不修改问题记录'};
 function ConstraintChips({value}:any){
  if(!value)return null;
  const persistent=value.persistent_labels||Object.entries(value.persistent_rules||{}).filter(([key,v])=>Boolean(v)&&constraintNames[key]).map(([key])=>constraintNames[key]);
@@ -61,12 +62,12 @@ function Delivery({value,onResume,canResume,disabled,turnId}:any){
  const reportChanged=value.report_changed&&(!turnId||savedThisTurn),revision=value.report_revision_after??value.report_revision_before;
  if(!incomplete&&!reportChanged)return null;
  const titles:any={completed:'本轮已完成',partial:'已保留进展，仍有事项未完成',failed:'本轮未完成',cancelled:'已停止，进展已保留'};
- return <section className={'turn-delivery '+value.status} aria-label="本轮执行结果"><div className="delivery-heading">{incomplete?<AlertCircle size={17}/>:<Check size={17}/>}<strong>{titles[value.status]||'本轮执行结果'}</strong></div>{reportChanged?<p>报告已更新至第 {revision} 版。</p>:revision!=null&&<p>沿用第 {revision} 版报告，本轮未保存新版本。</p>}{!!completed.length&&<details><summary>任务累计已完成 {completed.length} 个步骤</summary><ul>{completed.map((step:any,i:number)=><li key={step.step_id||i}>{step.label||toolNames[step.tool]||step.tool}</li>)}</ul></details>}{!!pending.length&&<div className="delivery-pending"><strong>还需完成</strong><ul>{pending.map((item:string,i:number)=><li key={i}>{item}</li>)}</ul></div>}{canResume&&value.can_resume&&value.resume_from_turn_id&&<button type="button" className="secondary" disabled={disabled} onClick={()=>onResume(value.resume_from_turn_id)}>继续未完成部分<ChevronRight size={15}/></button>}</section>
+ return <section className={'turn-delivery '+value.status} aria-label="本轮执行结果"><div className="delivery-heading">{incomplete?<AlertCircle size={17}/>:<Check size={17}/>}<strong>{titles[value.status]||'本轮执行结果'}</strong></div>{reportChanged?<p>报告已更新至第 {revision} 版。</p>:revision!=null&&<p>沿用第 {revision} 版报告，本轮未保存新版本。</p>}{!!completed.length&&<details><summary>任务累计已完成 {completed.length} 个步骤</summary><ul>{completed.map((step:any,i:number)=><li key={step.step_id||i}>{toolLabel(step.tool,step.label)}</li>)}</ul></details>}{!!pending.length&&<div className="delivery-pending"><strong>还需完成</strong><ul>{pending.map((item:string,i:number)=><li key={i}>{item}</li>)}</ul></div>}{canResume&&value.can_resume&&value.resume_from_turn_id&&<button type="button" className="secondary" disabled={disabled} onClick={()=>onResume(value.resume_from_turn_id)}>继续未完成部分<ChevronRight size={15}/></button>}</section>
 }
 function Step({step,onOpen,onAdopt,busy,accepted}:any){
   const [open,setOpen]=useState(false),result=step.result;
   return <div className={'agent-step '+step.state}>
-    <button className="step-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}>{step.state==='running'?<LoaderCircle size={14} className="spin"/>:step.state==='completed'?<Check size={14}/>:<AlertCircle size={14}/>}<strong>{toolNames[step.tool]||step.tool}</strong><span>{step.message}</span>{open?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button>
+    <button className="step-toggle" aria-expanded={open} onClick={()=>setOpen(!open)}>{step.state==='running'?<LoaderCircle size={14} className="spin"/>:step.state==='completed'?<Check size={14}/>:<AlertCircle size={14}/>}<strong>{toolLabel(step.tool,step.label)}</strong><span>{step.message}</span>{open?<ChevronDown size={14}/>:<ChevronRight size={14}/>}</button>
     {result?.artifact==='valuation'&&<div className="chat-artifact"><ValuationResult result={result.result} compact/><button className="text-link" onClick={()=>onOpen('model')}>查看假设与计算过程<ChevronRight size={14}/></button></div>}
     {result?.artifact==='proposal'&&<div className="chat-artifact proposal-artifact"><div><strong>{result.proposal.method_name} · 待确认的探索方案</strong><span className="badge">{result.proposal.id}</span></div><AssumptionChips values={result.proposal.assumptions}/><p>{result.proposal.rationale}</p><button className="primary" disabled={busy||accepted} onClick={()=>onAdopt(result.proposal)}>{accepted?'已采用':'采用此方案并计算'}</button><small>也可以在对话中提出修改，再决定是否采用。</small></div>}
     {result?.artifact==='report'&&<div className="chat-artifact report-artifact"><FilePenLine size={20}/><div><strong>{step.reused_from_step_id?'沿用已有报告':'报告已更新'} · 第 {result.revision} 版</strong><p>{result.change_note}</p></div><button className="text-link" onClick={()=>onOpen('overview')}>查看报告</button></div>}
@@ -81,7 +82,10 @@ function Step({step,onOpen,onAdopt,busy,accepted}:any){
 }
 export default function AgentChat({run,config,onConfigChange,onRunUpdated,onOpen,onNewResearch,prompt,autoSendPrompt=false,onPromptConsumed}:any){
   const [chat,setChat]=useState<any>(null),[chats,setChats]=useState<any[]>([]),[draft,setDraft]=useState(''),[profile,setProfile]=useState(config.active_model||''),[sending,setSending]=useState(false),[error,setError]=useState(''),[loading,setLoading]=useState(true);
-  const [attached,setAttached]=useState<any[]>([]),[historyNotice,setHistoryNotice]=useState(''),[showMaterials,setShowMaterials]=useState(false),[stopping,setStopping]=useState(false);
+  const [documentState,setDocumentState]=useState<DocumentState>({conversationId:'',documents:[],loading:false,error:''});
+  const [historyNotice,setHistoryNotice]=useState(''),[showMaterials,setShowMaterials]=useState(false),[stopping,setStopping]=useState(false);
+  const documentsLoader=useRef<ReturnType<typeof createDocumentLoader>|null>(null);
+  if(!documentsLoader.current)documentsLoader.current=createDocumentLoader(id=>api('/conversations/'+id+'/documents'),setDocumentState);
   const [budget,setBudget]=useState(()=>defaultBudget(config));
   const chatRef=useRef<any>(null);
   const stoppingRef=useRef<{id:string,turnId:string}|null>(null);
@@ -101,9 +105,14 @@ export default function AgentChat({run,config,onConfigChange,onRunUpdated,onOpen
     remember(c);setError(value=>c.state!=='running'||value.startsWith('暂时无法获取任务状态')||value.startsWith('状态消息读取失败')?'':value);return true;
   }
   async function ensureChat(){if(chatRef.current)return chatRef.current;const c=await post('/conversations',{run_id:run?.id||null});remember(c);await list();return c}
-  async function documentsChanged(){const c=chatRef.current;if(!c)return;remember(await api('/conversations/'+c.id));setAttached(await api('/conversations/'+c.id+'/documents'));if(c.run_id)await callback.current(c.run_id)}
-  useEffect(()=>{let alive=true;setAttached([]);if(chat?.id)api('/conversations/'+chat.id+'/documents').then(rows=>alive&&setAttached(rows)).catch(e=>alive&&setError(e.message));return()=>{alive=false}},[chat?.id,chat?.updated_at]);
-  async function removeChat(){if(!chat||active)return;setError('');try{await api('/conversations/'+chat.id,{method:'DELETE'});localStorage.removeItem(selectionKey);chatRef.current=null;setChat(null);setAttached([]);const rows=await list();if(rows.length)remember(await api('/conversations/'+rows[0].id));setHistoryNotice('对话已移入回收站，可以恢复。')}catch(e:any){setError(e.message)}}
+  async function documentsChanged(){const c=chatRef.current;if(!c)return;const next=await api('/conversations/'+c.id);if(chatRef.current?.id!==c.id)return;remember(next);await documentsLoader.current!.load(c.id,documentLoadKey(next,run),true);if(chatRef.current?.id===c.id&&c.run_id)await callback.current(c.run_id)}
+  const documentsKey=documentLoadKey(chat,run);
+  useEffect(()=>{documentsLoader.current!.load(chat?.id||'',documentsKey)},[documentsKey]);
+  useEffect(()=>()=>{chatRef.current=null;documentsLoader.current?.cancel()},[]);
+  const attached=documentState.conversationId===(chat?.id||'')?documentState.documents:[];
+  const documentsLoading=!!chat?.id&&(documentState.conversationId!==chat.id||documentState.loading);
+  const documentsError=documentState.conversationId===chat?.id?documentState.error:'';
+  async function removeChat(){if(!chat||active)return;setError('');try{await api('/conversations/'+chat.id,{method:'DELETE'});localStorage.removeItem(selectionKey);chatRef.current=null;setChat(null);const rows=await list();if(rows.length)remember(await api('/conversations/'+rows[0].id));setHistoryNotice('对话已移入回收站，可以恢复。')}catch(e:any){setError(e.message)}}
   useEffect(()=>{setProfile(config.active_model||'')},[config.active_model]);
   useEffect(()=>{setBudget(defaultBudget(config))},[JSON.stringify(config.execution_budget)]);
   async function list(){const v=await api('/conversations'+(run?.id?'?run_id='+run.id:''));setChats(v);return v}
@@ -174,7 +183,7 @@ export default function AgentChat({run,config,onConfigChange,onRunUpdated,onOpen
       <form className={'chat-composer'+(active?' chat-is-active':'')} onSubmit={send}>{error&&<p className="form-error" role="alert">{error}</p>}<textarea ref={textarea} aria-label="与析鲸AI讨论研究" placeholder="提出问题，或继续追问你的投资判断…" value={draft} onChange={e=>setDraft(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();send()}}} maxLength={8000} disabled={sending}/>
         <ResearchDocuments run={linkedRun} ensureChat={ensureChat} onDone={documentsChanged} disabled={active||sending}/>
         <div className="composer-bottom"><span>Enter 发送 · Shift + Enter 换行</span>{active?<button type="button" className="secondary" disabled={stopping} aria-busy={stopping} onClick={stop}>{stopping?<LoaderCircle size={13} className="spin"/>:<Square size={13}/>} {stopping?'正在停止…':'停止'}</button>:<button className="send-button" aria-label="发送研究消息" disabled={sending||!draft.trim()||!profile}>{sending?<LoaderCircle className="spin" size={17}/>:<ArrowUp size={18}/>}</button>}</div></form>
-    </section><aside className="chat-companion"><h3>资料与成果</h3><button className="deep-research-action" onClick={()=>send(undefined,deepResearchPrompt)} disabled={!linkedRun||active||sending||!profile}><Sparkles size={18}/><span>深入研究并保存报告</span><ChevronRight size={14}/></button><button onClick={()=>onOpen('overview')} disabled={!linkedRun}><BookOpen size={18}/><span>公司研究<small>{linkedRun?linkedRun.facts.length+' 项事实 · 第 '+(linkedRun.report_revision||1)+' 版':'尚未建立研究'}</small></span><ChevronRight size={14}/></button><button onClick={()=>onOpen('model')} disabled={!linkedRun}><SlidersHorizontal size={18}/><span>估值与假设<small>{linkedRun?.valuation_history?.length||0} 份情景</small></span><ChevronRight size={14}/></button><DocumentLinks documents={attached}/>{!!webSources.length&&<div className="chat-web-sources"><h4>网络来源 · 共 {webSources.length} 个</h4><WebReferences sources={webSources.slice(0,8)}/>{webSources.length>8&&<details><summary>查看其余 {webSources.length-8} 个来源</summary><WebReferences sources={webSources.slice(8)}/></details>}</div>}</aside></div>
+    </section><aside className="chat-companion"><h3>资料与成果</h3><button className="deep-research-action" onClick={()=>send(undefined,deepResearchPrompt)} disabled={!linkedRun||active||sending||!profile}><Sparkles size={18}/><span>深入研究并保存报告</span><ChevronRight size={14}/></button><button onClick={()=>onOpen('overview')} disabled={!linkedRun}><BookOpen size={18}/><span>公司研究<small>{linkedRun?linkedRun.facts.length+' 项事实 · 第 '+(linkedRun.report_revision||1)+' 版':'尚未建立研究'}</small></span><ChevronRight size={14}/></button><button onClick={()=>onOpen('model')} disabled={!linkedRun}><SlidersHorizontal size={18}/><span>估值与假设<small>{linkedRun?.valuation_history?.length||0} 份情景</small></span><ChevronRight size={14}/></button><DocumentLinks documents={attached} loading={documentsLoading} error={documentsError} onRetry={()=>documentsLoader.current!.load(chat.id,documentsKey,true)}/>{!!webSources.length&&<div className="chat-web-sources"><h4>网络来源 · 共 {webSources.length} 个</h4><WebReferences sources={webSources.slice(0,8)}/>{webSources.length>8&&<details><summary>查看其余 {webSources.length-8} 个来源</summary><WebReferences sources={webSources.slice(8)}/></details>}</div>}</aside></div>
   </div>
 }
 function ActivityIcon({running}:{running:boolean}){return running?<LoaderCircle size={14} className="spin"/>:<Check size={14}/>}

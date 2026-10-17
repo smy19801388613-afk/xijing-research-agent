@@ -106,7 +106,7 @@ def permitted_artifacts(required, rules):
     if rules.get('no_tools'):
         return set()
     if rules.get('no_report'): result.discard('report')
-    if rules.get('no_calculation') or rules.get('no_valuation'): result.discard('valuation')
+    if rules.get('no_calculation') or rules.get('no_valuation') or rules.get('no_valuation_recalculation'): result.discard('valuation')
     if rules.get('no_calculation') or rules.get('no_valuation'): result.difference_update(('sensitivity','comparables'))
     if rules.get('no_calculation'): result.difference_update(('financial_period_records','financial_period_analysis'))
     if rules.get('no_material_writes'): result.discard('financial_period_records')

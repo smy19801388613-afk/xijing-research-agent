@@ -4,6 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from app import deep_research as deep, research_tracking as tracking, store
+from recommendation_fixture import watch_recommendation
 
 
 def metric():
@@ -323,6 +324,7 @@ def test_tracking_only_evidence_row_is_added_to_frozen_report_sources(run):
 
 def test_refinement_repairs_accidentally_dropped_existing_tracking_plan(run, monkeypatch):
     original = memo_candidate(); original['tracking_metrics'] = [metric()]
+    original['investment_recommendation'] = watch_recommendation()
     store.update_run(run['id'], lambda r: r.update(memo=deep.validate_memo(original, run)))
     chat = store.new_conversation(run['id'])
     calls = []

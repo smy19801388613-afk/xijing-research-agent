@@ -3,7 +3,7 @@ import json
 import re
 from copy import deepcopy
 from html import escape
-from decimal import Decimal
+from decimal import Decimal,InvalidOperation
 from .finance import METRICS,number,comparison_view
 from .fact_state import verification
 from .review_state import issue_text
@@ -104,6 +104,11 @@ def _evidence_bundle(run, get_document, snapshot_dir, legacy=False):
     files['audit.md']=markdown(run,audit=True,document_paths=paths).encode('utf-8')
     files['audit.html']=printable(run,audit=True,document_paths=paths).encode('utf-8')
     files['run.json']=json.dumps(run,ensure_ascii=False,indent=2).encode('utf-8')
+    recommendation=(run.get('memo') or {}).get('investment_recommendation')
+    if isinstance(recommendation,dict):
+        files['analysis/investment-recommendation.json']=json.dumps(recommendation,ensure_ascii=False,indent=2).encode('utf-8')
+    for field in ('market_snapshot','market_snapshot_history'):
+        if run.get(field): files['analysis/'+field+'.json']=json.dumps(run[field],ensure_ascii=False,indent=2).encode('utf-8')
     from .research_extensions import context as extension_context
     extension_inputs = extension_context(run)
     if extension_inputs:
@@ -182,14 +187,194 @@ def export_url(url):
     return 'http://127.0.0.1:8920'+url if url.startswith('/api/documents/') else url
 
 def reference_markdown(memo,ids):
-    return '；'.join('['+s['title']+']('+export_url(s['url'])+')' if s.get('url') else s['title'] for s in memo_references(memo,ids))
+    return '；'.join('['+_markdown_text(s['title'])+']('+url+')' if (url:=_recommendation_url(s.get('url'))) else _markdown_text(s['title']) for s in memo_references(memo,ids))
 
 def reference_html(memo,ids):
-    return ' · '.join('<a href="'+escape(export_url(s['url']),quote=True)+'">'+escape(s['title'])+'</a>' if s.get('url') else escape(s['title']) for s in memo_references(memo,ids))
+    return ' · '.join('<a href="'+escape(url,quote=True)+'">'+escape(s['title'])+'</a>' if (url:=_recommendation_url(s.get('url'))) else escape(s['title']) for s in memo_references(memo,ids))
 
 def prose_html(value):
     # Escape before the tiny Markdown presentation pass: never execute model HTML.
     return ''.join('<p>'+re.sub(r'\*\*([^*]+)\*\*',r'<strong>\1</strong>',escape(p)).replace('\n','<br>')+'</p>' for p in str(value).split('\n\n') if p.strip())
+
+
+RECOMMENDATION_ACTIONS={'buy':'买入','hold':'持有','reduce':'减持','avoid':'回避','watch':'观察'}
+RECOMMENDATION_CONFIDENCE={'low':'低','medium':'中','high':'高'}
+RECOMMENDATION_BASES={'valuation':'估值判断','fundamental_risk':'经营或治理风险','evidence_gap':'证据缺口'}
+RECOMMENDATION_FIELD_LABELS={'exit_conditions':'减仓或退出条件','buy_conditions':'建仓或加仓条件','revisit_triggers':'重新评估条件'}
+RECOMMENDATION_LISTS=(('buy_conditions','建仓或加仓条件'),('exit_conditions','减仓或退出条件'),
+                      ('key_risks','主要风险'),('revisit_triggers','何时调整建议'),('blocking_gaps','当前决策缺口'))
+
+
+def _recommendation_text(value):
+    """Translate known display tokens only; stored prose and evidence stay intact."""
+    return re.sub(r'(?<![A-Za-z0-9_])(?:exit_conditions|buy_conditions|revisit_triggers)(?![A-Za-z0-9_])',
+                  lambda match:RECOMMENDATION_FIELD_LABELS[match.group()],str(value))
+
+
+def recommendation_label(rec):
+    action=RECOMMENDATION_ACTIONS.get(rec.get('action'))
+    if rec.get('status') not in ('actionable','conditional') or not action: return '暂不决策'
+    if rec.get('action')=='watch': return '观察，暂不行动'
+    return '条件满足后'+action if rec.get('status')=='conditional' else action
+
+
+def _recommendation_url(value):
+    from urllib.parse import urlsplit
+    if not isinstance(value,str): return None
+    value=export_url(value)
+    if urlsplit(value).scheme in ('https','http') and not re.search(r'[\x00-\x20<>"\\]',value): return value
+    # Evidence bundles rewrite attached PDFs into controlled relative paths.
+    if re.fullmatch(r'documents/[\w-]+\.pdf(?:#page=\d+)?',value): return value
+    return None
+
+
+def _recommendation_references(memo,rec):
+    sources={s.get('id'):s for s in memo.get('sources',[]) if isinstance(s,dict)}
+    evidence=[sources.get(key,{'id':key,'title':str(key)+' · 此版本未附来源'}) for key in rec.get('evidence_ids',[])]
+    scenarios={v.get('id'):v for v in (memo.get('valuation_context') or {}).get('scenarios',[]) if isinstance(v,dict)}
+    scenarios.update({v.get('scenario_id'):v for v in rec.get('valuation_basis',[]) if isinstance(v,dict)})
+    valuations=[scenarios.get(key,{'scenario_id':key,'method_name':str(key)+' · 此版本未附情景'}) for key in rec.get('valuation_scenario_ids',[])]
+    return evidence,valuations
+
+
+def _recommendation_assumptions(item):
+    from .valuation import CATALOG
+    method=next((m for m in CATALOG if m['id']==item.get('method')),{})
+    labels={f['key']:f for f in method.get('fields',[])}
+    return '；'.join(labels.get(k,{}).get('label',str(k))+'：'+str(v)+labels.get(k,{}).get('unit','') for k,v in item.get('assumptions',{}).items())
+
+
+def _finite_decimal(value):
+    try:
+        if isinstance(value,bool): return None
+        result=Decimal(str(value))
+        return result if result.is_finite() else None
+    except (InvalidOperation,TypeError,ValueError): return None
+
+
+def _recommendation_quote(rec,memo):
+    quote=rec.get('market_snapshot') or {}
+    if not isinstance(quote,dict): return None
+    price=_finite_decimal(quote.get('price'))
+    has_source=quote.get('source_id') and (any(s.get('id')==quote['source_id'] for s in memo.get('sources',[]))
+        or quote.get('text') and _recommendation_url(quote.get('source_url')))
+    return quote if quote.get('status')=='available' and price is not None and price>0 and quote.get('trade_date') and has_source else None
+
+
+def _recommendation_comparisons(rec,quote):
+    if not quote or quote.get('decision_eligible') is not True: return []
+    scenarios={v.get('scenario_id'):v for v in rec.get('valuation_basis',[]) if isinstance(v,dict)}
+    result=[]
+    for item in rec.get('price_comparisons',[]):
+        scenario=scenarios.get(item.get('scenario_id')); estimate=_finite_decimal(item.get('scenario_price'))
+        if (item.get('scenario_id') in rec.get('valuation_scenario_ids',[]) and scenario and estimate is not None and estimate>0
+            and estimate==_finite_decimal((scenario.get('output') or {}).get('price'))
+            and _finite_decimal(item.get('current_price'))==_finite_decimal(quote.get('price'))
+            and item.get('currency')==quote.get('currency') and item.get('trade_date')==quote.get('trade_date')
+            and item.get('assumption_status')=='user_scenario' and _finite_decimal(item.get('upside_pct')) is not None): result.append(item)
+    return result
+
+
+def recommendation_freshness(run):
+    """A title-only edit does not refresh the decision or its frozen market data."""
+    rec=(run.get('memo') or {}).get('investment_recommendation') or {}
+    if not rec: return ''
+    def signature(value):
+        value=value or {}
+        return [value.get(k) if k!='price' else _finite_decimal(value.get(k)) for k in ('status','ticker','price','currency','trade_date','as_of')]
+    if run.get('market_snapshot') and signature(run['market_snapshot'])!=signature(rec.get('market_snapshot')):
+        return '当前行情资料已变化。本建议仍采用原快照与原判断；需要重新核验并修订建议。局部文字修改不会更新这些依据。'
+    if rec.get('as_of') and run.get('request',{}).get('as_of') and rec['as_of']!=run['request']['as_of']:
+        return '研究截止日已变化。本建议仍采用原快照与原判断；需要重新核验并修订建议。局部文字修改不会更新这些依据。'
+    return ''
+
+
+def _markdown_text(value):
+    """Treat recommendation fields as text, never active Markdown or HTML."""
+    return re.sub(r'([\\`*_{}\[\]()#+.!|>~-])',r'\\\1',escape(str(value),quote=False)).replace('\r','').replace('\n',' ')
+
+
+def recommendation_markdown(memo,freshness=''):
+    rec=memo.get('investment_recommendation')
+    if not isinstance(rec,dict): return '\n## 投资建议\n\n此版本尚未形成明确建议。原研究立场保留。'
+    t=_markdown_text
+    lines=['\n## 投资建议：'+recommendation_label(rec),t(_recommendation_text(rec.get('summary',''))),
+           '判断依据：'+RECOMMENDATION_BASES.get(rec.get('basis'),'待明确'),
+           '期限：'+t(_recommendation_text(rec.get('horizon') or '待明确'))+'；置信度：'+RECOMMENDATION_CONFIDENCE.get(rec.get('confidence'),'待评估')
+           +('；截至：'+t(rec['as_of']) if rec.get('as_of') else ''),
+           '**未持仓：** '+t(_recommendation_text(rec.get('new_position') or '行动待明确')),
+           '**已有持仓：** '+t(_recommendation_text(rec.get('existing_position') or '行动待明确'))]
+    if freshness: lines.append(t(freshness))
+    quote=_recommendation_quote(rec,memo)
+    if quote:
+        text=('参考收盘价（适用性待核实）：' if quote.get('decision_eligible') is False else '参考收盘价：')+t(quote['price'])+' '+t(quote.get('currency',''))+'；证券：'+t(quote.get('ticker','未记录'))+'；交易日：'+t(quote['trade_date'])
+        url=_recommendation_url(quote.get('source_url'))
+        if url: text+='；[行情来源](<'+url+'>)'
+        lines.append(text)
+        if quote.get('decision_eligible') is False and quote.get('decision_gaps'):
+            lines+=['行情适用限制：'+t('；'.join(quote['decision_gaps']))]
+        for item in _recommendation_comparisons(rec,quote):
+            lines.append('估值情景：'+t(item.get('scenario_price',''))+' '+t(item.get('currency',''))
+                         +'；相对所列参考价的假设空间：'+t(item.get('upside_pct',''))+'%；来自已保存的用户假设情景，不代表收益预测。')
+    for field,label in RECOMMENDATION_LISTS:
+        if rec.get(field): lines+=['### '+label]+['- '+t(_recommendation_text(item)) for item in rec[field]]
+    evidence,valuations=_recommendation_references(memo,rec)
+    if evidence:
+        lines+=['### 建议依据']
+        for source in evidence:
+            url=_recommendation_url(source.get('url')); title=t(source.get('title') or source.get('id','来源'))
+            lines+=['- '+('['+title+'](<'+url+'>)' if url else title)]
+    if valuations:
+        lines+=['### 本版本引用的估值情景']
+        for item in valuations:
+            lines.append('- '+t(item.get('method_name') or item.get('method') or item.get('scenario_id','估值')))
+            if item.get('assumptions'): lines.append('用户假设：'+t(_recommendation_assumptions(item)))
+            output=item.get('output') or {}
+            if output.get('price') is not None: lines.append('情景每股价值：'+t(output['price']))
+            if output.get('equity_value_100m') is not None: lines.append('情景股权价值：'+t(output['equity_value_100m'])+' 亿元')
+    return '\n\n'.join(lines)
+
+
+def recommendation_html(memo,freshness=''):
+    rec=memo.get('investment_recommendation')
+    if not isinstance(rec,dict): return '<section class="recommendation"><h2>投资建议</h2><p>此版本尚未形成明确建议。原研究立场保留。</p></section>'
+    def t(value): return escape(str(value),quote=True)
+    parts=['<section class="recommendation"><h2>投资建议：'+recommendation_label(rec)+'</h2>',prose_html(_recommendation_text(rec.get('summary',''))),
+           '<p>判断依据：'+RECOMMENDATION_BASES.get(rec.get('basis'),'待明确')+'</p>',
+           '<p>期限：'+t(_recommendation_text(rec.get('horizon') or '待明确'))+' · 置信度：'+RECOMMENDATION_CONFIDENCE.get(rec.get('confidence'),'待评估')
+           +(' · 截至：'+t(rec['as_of']) if rec.get('as_of') else '')+'</p>',
+           '<div class="recommendation-positions"><p><strong>未持仓：</strong>'+t(_recommendation_text(rec.get('new_position') or '行动待明确'))+'</p>',
+           '<p><strong>已有持仓：</strong>'+t(_recommendation_text(rec.get('existing_position') or '行动待明确'))+'</p></div>']
+    if freshness: parts.append('<p class="recommendation-frozen-notice">'+t(freshness)+'</p>')
+    quote=_recommendation_quote(rec,memo)
+    if quote:
+        url=_recommendation_url(quote.get('source_url'))
+        parts.append('<p>'+('参考收盘价（适用性待核实）：' if quote.get('decision_eligible') is False else '参考收盘价：')+'<strong>'+t(quote['price'])+' '+t(quote.get('currency',''))+'</strong> · 证券：'+t(quote.get('ticker','未记录'))+' · 交易日：'+t(quote['trade_date'])
+                     +(' · <a href="'+t(url)+'">行情来源</a>' if url else '')+'</p>')
+        if quote.get('decision_eligible') is False and quote.get('decision_gaps'):
+            parts.append('<p>行情适用限制：'+t('；'.join(quote['decision_gaps']))+'</p>')
+        for item in _recommendation_comparisons(rec,quote):
+            parts.append('<p>估值情景：'+t(item.get('scenario_price',''))+' '+t(item.get('currency',''))+'；相对所列参考价的假设空间：'
+                         +t(item.get('upside_pct',''))+'%；来自已保存的用户假设情景，不代表收益预测。</p>')
+    for field,label in RECOMMENDATION_LISTS:
+        if rec.get(field): parts.append('<h3>'+label+'</h3><ul>'+''.join('<li>'+t(_recommendation_text(item))+'</li>' for item in rec[field])+'</ul>')
+    evidence,valuations=_recommendation_references(memo,rec)
+    if evidence:
+        parts+=['<h3>建议依据</h3><ul>']
+        for source in evidence:
+            url=_recommendation_url(source.get('url')); title=t(source.get('title') or source.get('id','来源'))
+            parts.append('<li>'+('<a href="'+t(url)+'">'+title+'</a>' if url else title)+'</li>')
+        parts+=['</ul>']
+    if valuations:
+        parts+=['<h3>本版本引用的估值情景</h3>']
+        for item in valuations:
+            parts+=['<details><summary>'+t(item.get('method_name') or item.get('method') or item.get('scenario_id','估值'))+'</summary>']
+            if item.get('assumptions'): parts.append('<p>用户假设：'+t(_recommendation_assumptions(item))+'</p>')
+            output=item.get('output') or {}
+            if output.get('price') is not None: parts.append('<p>情景每股价值：'+t(output['price'])+'</p>')
+            if output.get('equity_value_100m') is not None: parts.append('<p>情景股权价值：'+t(output['equity_value_100m'])+' 亿元</p>')
+            parts+=['</details>']
+    return ''.join(parts+['</section>'])
 
 
 def extension_html(value):
@@ -283,7 +468,7 @@ def markdown(run, audit=False, document_paths=None):
     req=run["request"];memo=run.get("memo") or {}
     lines=[f"# {memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究'}",f"研究问题：{req['question']}",
         f"截止日：{req['as_of']} | 模式：{'样例回放' if req['mode']=='sample' else '实时研究'} | 状态：{run['state']}",
-        delivery_note(run,audit,document_paths is not None),
+        delivery_note(run,audit,document_paths is not None),recommendation_markdown(memo,recommendation_freshness(run)),
         "\n## 核心财务事实（人民币亿元）","| 指标 | 本期 | 上期 | 同比 / 金额变化 |","|---|---:|---:|---:|"]
     for metric,meta in METRICS.items():
         vals=[]
@@ -399,9 +584,10 @@ def printable(run, audit=False, document_paths=None):
     extra = extension_markdown(run, audit=audit)
     if extra: scenario_html += '<section>' + extension_html(extra) + '</section>'
     return f"""<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><link rel="icon" href="data:,"><title>{e(run['company'])} · 研究底稿</title>
-<style>body{{font:14px/1.85 system-ui,"Microsoft YaHei",sans-serif;color:#334155;margin:45px auto;padding:0 28px;max-width:980px}}header{{border-bottom:3px solid #a02070;padding-bottom:24px}}.brand{{font-size:12px;letter-spacing:2px;color:#64748b}}h1{{font-size:29px;margin:14px 0}}h2{{margin-top:34px;font-size:20px;color:#475569}}h3{{font-size:15px}}.muted{{font-size:12px;color:#64748b}}table{{width:100%;border-collapse:collapse;text-align:right;font-variant-numeric:tabular-nums}}td,th{{padding:12px;border-bottom:1px solid #e2e8f0}}thead{{background:#f8fafc}}th:first-child{{text-align:left}}.summary,.counter{{padding:18px;background:#fcf6fa;border-left:3px solid #e5bed5}}.thesis{{margin:22px 0}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 monospace;background:#f8fafc;padding:15px;border:1px solid #e2e8f0}}a{{color:#a02070}}li{{margin:7px 0}}details{{margin:18px 0}}summary{{cursor:pointer;font-weight:600}}footer{{border-top:1px solid #e2e8f0;margin-top:35px;padding-top:16px}}@media print{{body{{margin:0;max-width:none;font-size:11px}}h2,h3{{break-after:avoid}}tr,.counter{{break-inside:avoid}}.print-hint{{display:none}}}}</style></head><body>
+<style>body{{font:14px/1.85 system-ui,"Microsoft YaHei",sans-serif;color:#334155;margin:45px auto;padding:0 28px;max-width:980px}}header{{border-bottom:3px solid #a02070;padding-bottom:24px}}.brand{{font-size:12px;letter-spacing:2px;color:#64748b}}h1{{font-size:29px;margin:14px 0}}h2{{margin-top:34px;font-size:20px;color:#475569}}h3{{font-size:15px}}.muted{{font-size:12px;color:#64748b}}table{{width:100%;border-collapse:collapse;text-align:right;font-variant-numeric:tabular-nums}}td,th{{padding:12px;border-bottom:1px solid #e2e8f0}}thead{{background:#f8fafc}}th:first-child{{text-align:left}}.recommendation{{margin:28px 0;padding:22px 25px;background:#fcf6fa;border:1px solid #e7cadd;border-top:4px solid #a02070;border-radius:12px}}.recommendation h2{{margin-top:0;color:#7d1b59}}.recommendation-positions{{border-top:1px solid #ead6e3;border-bottom:1px solid #ead6e3;padding:4px 0}}.summary,.counter{{padding:18px;background:#fcf6fa;border-left:3px solid #e5bed5}}.thesis{{margin:22px 0}}pre{{white-space:pre-wrap;overflow-wrap:anywhere;font:11px/1.7 monospace;background:#f8fafc;padding:15px;border:1px solid #e2e8f0}}a{{color:#a02070}}li{{margin:7px 0}}details{{margin:18px 0}}summary{{cursor:pointer;font-weight:600}}footer{{border-top:1px solid #e2e8f0;margin-top:35px;padding-top:16px}}@media print{{body{{margin:0;max-width:none;font-size:11px}}h2,h3{{break-after:avoid}}tr,.counter{{break-inside:avoid}}.print-hint{{display:none}}}}</style></head><body>
 <header><div class="brand">析鲸AI RESEARCH DESK · {e(memo.get('generator_version',run['version']))} · 报告第 {run.get('report_revision',1)} 版</div><h1>{e(memo.get('title') or run['company']+' · '+str(req['year'])+' 年财务研究')}</h1>
 <p>{e(req['question'])}</p><p class="muted">截止日 {req['as_of']} · {'样例回放' if req['mode']=='sample' else '实时研究'} · {e(run['state'])} · 模型状态 {e(run['model']['status'])}</p><p class="muted">{e(delivery_note(run,audit,document_paths is not None))}</p><p class="muted print-hint">浏览器按 Ctrl + P 可打印或保存 PDF。</p></header>
+{recommendation_html(memo,recommendation_freshness(run))}
 <h2>核心财务事实</h2><p class="muted">人民币亿元，年度合并报表。归母净利润为归属于母公司股东口径。</p>
 <table><thead><tr><th>指标</th><th>{req['year']}</th><th>{req['year']-1}</th><th>同比 / 金额变化</th><th>本期来源状态</th></tr></thead><tbody>{''.join(rows)}</tbody></table>
 <h2>{e(memo.get('title','研究判断 · 待复核'))}</h2><p><strong>{e(memo.get('stance',''))}</strong></p><p class="summary">{e(memo.get('summary','研究尚未完成'))}</p>{''.join(sections)}

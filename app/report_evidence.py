@@ -114,6 +114,13 @@ def priorities(run, refs, drafts=()):
                     for sid in sequence(baseline.get('evidence_ids')):
                         add(sid, baseline.get('quote'))
                     add(baseline.get('source_id'), baseline.get('quote'))
+        recommendation = value.get('investment_recommendation')
+        if isinstance(recommendation, dict):
+            for sid in sequence(recommendation.get('evidence_ids')):
+                add(sid)
+            for sid in sequence(recommendation.get('valuation_scenario_ids')):
+                if isinstance(sid, str): add('valuation-' + sid)
+            add((recommendation.get('market_snapshot') or {}).get('source_id'))
 
     for draft in drafts:
         report(draft)

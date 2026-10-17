@@ -2,6 +2,7 @@
 import copy
 
 import pytest
+from recommendation_fixture import watch_recommendation
 
 from app import deep_research as deep, store
 from app.providers import ProviderError
@@ -229,6 +230,7 @@ def test_deep_followup_gather_respects_task_search_limit_and_retains_existing_bo
                          'frequency':'取得新增定期报告后','next_check':'下一次查阅财务披露时',
                          'support_condition':'原始回款证据支持经营改善','invalidate_condition':'新增披露与当前判断冲突',
                          'threshold_basis':'qualitative','next_action':'核查现金流附注','status':'needs_baseline'}]}
+            draft['investment_recommendation'] = watch_recommendation()
             return draft, {'model':'stub'}
         return {'issues':[],'requires_revision':False}, {'model':'stub'}
     monkeypatch.setattr(deep,'model_json',model)

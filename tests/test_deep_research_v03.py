@@ -3,6 +3,7 @@ import json
 import pytest
 from app import store,deep_research as deep,agent,providers,connections
 from app.exporting import markdown,printable
+from recommendation_fixture import watch_recommendation
 
 @pytest.fixture
 def run(tmp_path,monkeypatch):
@@ -16,7 +17,8 @@ def candidate():
     return {'title':'产品商业化与回款的分歧','summary':'业务增长要与回款共同验证','stance':'继续跟踪，现金约束未解除',
         'theses':[{'title':name,'body':'来源能证明产品存在，尚不能证明独立盈利','evidence_ids':['web-product'],'counter_evidence':'客户验收不等于收款','invalidate_if':'取得产品利润与实际回款明细','status':'inference'} for name in ('产品商业化','现金约束')],
         'sections':[{'key':key,'body':'具体分析，原始证据与推断分开。','evidence_ids':['web-product'],'status':'inference'} for key in deep.SECTION_TITLES],
-        'questions':['按产品核对订单、验收与回款'],'limitations':['没有独立披露产品利润']}
+        'questions':['按产品核对订单、验收与回款'],'limitations':['没有独立披露产品利润'],
+        'investment_recommendation':watch_recommendation()}
 
 
 def tracked_candidate():
@@ -147,6 +149,36 @@ def test_build_repairs_then_saves_once_and_retains_old_memo(run,monkeypatch):
     assert updated['memo']['review']['revision_performed'] and len(updated['deep_research_log']['calls'])==5
 
 
+def test_tracking_composite_baseline_repair_receives_single_quantity_guidance(run, monkeypatch):
+    current=source_run(run)
+    current['research_sources'][0]['text']='合成披露：现金分红100元。另一段：回购50元。'
+    store.save_run(current)
+    monkeypatch.setattr(deep.documents,'attached_documents',lambda _: [{'ticker':'300271.SZ','year':2025,'title':'2025年年度报告','page_count':194}])
+    monkeypatch.setattr(deep.documents,'ensure_index',lambda _: [])
+    monkeypatch.setattr(deep.documents,'search_attached',lambda *args: {'snippets':[]})
+    monkeypatch.setattr(deep.web_research,'search',lambda q,**kw: {'queries':q,'results':[]})
+    invalid=tracked_candidate()
+    invalid['tracking_metrics'][0]['baseline']={'status':'observed','value':'100元；50元','period':'2025年度',
+        'source_id':'web-product','quote':'现金分红100元'}
+    repaired=copy.deepcopy(invalid)
+    repaired['tracking_metrics'][0]['baseline']['value']='100元'
+    answers=iter([{'queries':['华宇软件 产品 客户'],'pdf_queries':['产品']}, {'queries':[]},
+        invalid, {'issues':[],'requires_revision':False}, repaired])
+    payloads=[]
+    def model(system,payload,*a,**kw):
+        payloads.append(payload)
+        return next(answers),{'model':'stub'}
+    monkeypatch.setattr(deep,'model_json',model)
+    result=deep.build(run['id'],'完成研究')
+    feedback=payloads[-1]['validation_error']
+    assert '不匹配值 50' in feedback and 'baseline只保留一个原始量' in feedback
+    assert '同一个source_id的连续quote' in feedback and '资本开支与经营现金流' in feedback
+    saved=store.get_run(run['id'])
+    assert result['revision']==2 and len(saved['memo_revisions'])==1
+    assert saved['memo']['tracking_metrics'][0]['baseline']['value']=='100元'
+    assert len(payloads)==5
+
+
 def test_build_repair_cannot_adopt_concurrently_published_report_as_base(run,monkeypatch):
     source_run(run)
     monkeypatch.setattr(deep.documents,'attached_documents',lambda _: [{'ticker':'300271.SZ','year':2025,'title':'2025年年度报告','page_count':194}])
@@ -255,7 +287,7 @@ def test_refine_resumes_failed_draft_with_revalidation_and_atomic_save_marker(ru
         seen.append(copy.deepcopy(payload))
         assert payload['working_draft']==broken
         assert payload['previous_report']['title']=='原报告'
-        assert payload['prior_review_issues']==['先核对业务引文']
+        assert [i['text'] for i in payload['prior_review_issues']]==['先核对业务引文']
         assert 'missing-source' in payload['working_draft_validation_feedback']
         return candidate(),{'model':'stub'}
     monkeypatch.setattr(deep,'model_json',call)

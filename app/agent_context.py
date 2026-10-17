@@ -134,6 +134,11 @@ def _memo(memo):
     result['sections'] = [_fields(s, ('id', 'title', 'status', 'evidence_ids'), 150)
                           for s in (memo.get('theses', []) + memo.get('sections', []))[:16]]
     result['limitations'] = [_clip(item, 250) for item in memo.get('limitations', [])[:4]]
+    recommendation = memo.get('investment_recommendation')
+    if isinstance(recommendation, dict):
+        result['investment_recommendation'] = _fields(recommendation,
+            ('action','status','summary','horizon','confidence','new_position','existing_position',
+             'blocking_gaps','evidence_ids','valuation_scenario_ids'), 600)
     result['context_note'] = '已有报告仅展示摘要与章节索引，不重复注入长正文及冻结历史。'
     return _fit(result, 2500)
 
@@ -149,6 +154,9 @@ def bounded_context(chat, run=None, max_chars=18000):
     result['memo'] = _memo(run.get('memo'))
     result['valuations'] = _fit(list(reversed(run.get('valuation_history', [])[-4:])), 1800)
     result['report_valuation_status'] = _fit(report_valuation_status(run), 1600)
+    if run.get('market_snapshot'):
+        result['market_snapshot'] = _fields(run['market_snapshot'], ('status','ticker','price','currency',
+            'trade_date','as_of','source_id','text','source_url','provider','gaps','notes','age_days','price_age_days'), 900)
     from .research_extensions import context as extension_context
     extensions = extension_context(run)
     if extensions: result['research_extensions'] = _fit(extensions, 4500)
@@ -269,6 +277,31 @@ def _period_projection(result):
     analysis = result.get('analysis') or {}
     output['analysis'] = {key: deepcopy(analysis.get(key, [])[:12] if already_projected else analysis.get(key, [])[-12:][::-1]) for key in
         ('comparisons', 'nonrecurring_bridges', 'signals', 'issues', 'quarters', 'cumulative', 'balances')}
+    comparisons = analysis.get('comparisons', [])
+    def calculated(row):
+        return row.get('value') is not None or row.get('change') is not None
+    if not already_projected:
+        # A six-record annual ledger also produces many unavailable quarter
+        # comparisons. Preserve the actual answers before those missing rows.
+        comparisons = sorted(comparisons, key=lambda row: (
+            calculated(row), row.get('kind') == 'yoy' and row.get('period_type') == 'cumulative' and row.get('quarter') == 4,
+            row.get('year', 0), row.get('quarter', 0)), reverse=True)
+    output['analysis']['comparisons'] = []
+    for row in comparisons[:12]:
+        item = _fields(row, ('id', 'metric', 'label', 'period_label', 'year', 'quarter', 'kind', 'period_type',
+            'current', 'previous', 'previous_period', 'value', 'change', 'currency', 'scope', 'comparability_key',
+            'restatement', 'inputs', 'source_ids', 'source_status', 'formula', 'reason'), 200)
+        # The period engine normalizes every monetary comparison to yuan;
+        # value is a percentage, whereas current/previous/change are amounts.
+        item.update(unit=row.get('unit', '元'), value_unit=row.get('value_unit', '%'))
+        if 'source_ids' not in item:
+            item['source_ids'] = list(dict.fromkeys(sid for identity in row.get('inputs', [])
+                for sid in [by_id.get(identity, {}).get('source_id'), *by_id.get(identity, {}).get('original_source_ids', [])] if sid))
+        output['analysis']['comparisons'].append(item)
+    calculated_count = result.get('comparison_counts', {}).get('calculated', sum(calculated(row) for row in comparisons))
+    shown_calculated = sum(calculated(row) for row in output['analysis']['comparisons'])
+    output['comparison_counts'] = {'calculated': calculated_count, 'shown_calculated': shown_calculated,
+                                   'omitted_calculated': max(0, calculated_count - shown_calculated)}
     # Derived numeric rows are small; remove only surplus rows, never truncate
     # their inputs or change a null/blocked comparison into a calculated value.
     counts = result.get('analysis_counts') or {key: len(rows) for key, rows in analysis.items() if isinstance(rows, list)}
@@ -276,11 +309,15 @@ def _period_projection(result):
     output['record_count'] = result.get('record_count', len(records))
     output = _analysis_prose(output, 8000)
     tables = [output['records']] + list(output['analysis'].values())
+    protected = {id(row) for row in output['analysis']['comparisons'] if calculated(row)}
     while size(output) > 8000:
-        candidates = [rows for rows in tables if len(rows) > 1]
+        candidates = [(rows, index) for rows in tables if len(rows) > 1
+                      for index in [next((i for i in range(len(rows)-1, -1, -1) if id(rows[i]) not in protected), None)]
+                      if index is not None]
         if not candidates: break
-        max(candidates, key=size).pop()
-    output['context_note'] = '期间记录与分析是有界工作集，record_count/analysis_counts给出完整数量；省略不表示缺失。保留期间、单位、口径、公式及来源定位，派生结果不升级输入可信度。'
+        rows, index = max(candidates, key=lambda candidate: size(candidate[0]))
+        rows.pop(index)
+    output['context_note'] = '期间记录与分析是有界工作集，record_count/analysis_counts给出完整数量；省略不表示缺失。最多保留12项已计算比较，年度同比优先，comparison_counts说明计算结果省略数量。金额以元计，value为百分比；保持原指标口径，不用其他收入或利润口径替换。保留公式及来源定位，派生结果不升级输入可信度。'
     return output
 
 
@@ -310,6 +347,9 @@ def _valuation_projection(result, group):
 def _tool_result(result, recent, preserve_read=False, tool=None):
     if not isinstance(result, dict):
         return _clip(result, 800)
+    if tool == 'fetch_market_quote':
+        return _fields(result, ('artifact','status','ticker','price','currency','trade_date','as_of',
+            'source_id','text','source_url','provider','gaps','notes','age_days','price_age_days','error'), 1000)
     group = EXTENSION_GROUPS.get(tool)
     if group and not result.get('error'):
         if group == 'tracking': return _tracking_projection(result)
@@ -415,7 +455,7 @@ def compact_tool_results(results, max_chars=10000):
                 comparison_remaining -= size(fresh)
                 comparison_reads += 1
             item['result'] = _tool_result(read_result, len(unique) < 2, full_read, row.get('tool'))
-            group = EXTENSION_GROUPS.get(row.get('tool'))
+            group = 'market_quote' if row.get('tool') == 'fetch_market_quote' else EXTENSION_GROUPS.get(row.get('tool'))
             if group and group not in current_analyses and isinstance(read_result, dict) and not read_result.get('error'):
                 item['structured_analysis_observation'] = True
                 current_analyses.add(group)

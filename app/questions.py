@@ -221,6 +221,7 @@ def _question_snapshot(run,memo):
         items[q['id']]={'fingerprint':_fingerprint(content),'revision':q.get('revision',1),
                         'source_fingerprints':sources,'archived':q.get('archived',False)}
     cited={sid for section in memo.get('theses',[])+memo.get('sections',[]) for sid in section.get('evidence_ids',[])}
+    cited.update((memo.get('investment_recommendation') or {}).get('evidence_ids', []))
     return {'schema_version':1,'as_of':run.get('request',{}).get('as_of'),'questions':items,
             'report_sources':{sid:source_fingerprint(refs[sid],run) if sid in refs else None for sid in sorted(cited)}}
 
@@ -258,9 +259,12 @@ def assert_report_input(run,memo):
 
 def report_sync(run):
     memo=run.get('memo') or {};saved=memo.get('question_snapshot')
+    from .investment_recommendation import freshness
+    recommendation_freshness = freshness(run)
     if not saved or saved.get('schema_version')!=1:
-        return {'status':'untracked','needs_update':False,'changed_question_ids':[],
+        return {'status':'untracked','needs_update':recommendation_freshness['needs_update'],'changed_question_ids':[],
                 'source_changed_question_ids':[],'changed_source_ids':[],
+                'recommendation_freshness':recommendation_freshness,
                 'message':'该历史报告尚未记录问题与证据版本；下次明确更新报告时建立关联。'}
     current=_question_snapshot(run,memo);before=saved.get('questions',{});after=current['questions']
     ids=sorted(set(before)|set(after))
@@ -271,8 +275,9 @@ def report_sync(run):
     cutoff_changed=saved.get('as_of')!=current['as_of']
     from .report_state import dependency_snapshot
     dependency_changed=bool(memo.get('dependency_snapshot') and memo['dependency_snapshot']!=dependency_snapshot(run,memo))
-    stale=bool(changed or source_changed or changed_sources or cutoff_changed or dependency_changed)
+    stale=bool(changed or source_changed or changed_sources or cutoff_changed or dependency_changed or recommendation_freshness['needs_update'])
     return {'status':'stale' if stale else 'current','needs_update':stale,
             'changed_question_ids':changed,'source_changed_question_ids':source_changed,'changed_source_ids':changed_sources,
             'dependency_changed':dependency_changed,
+            'recommendation_freshness':recommendation_freshness,
             'message':'问题、证据、财务输入或估值情景已变化，报告待同步；现有报告和估值情景尚未改写。' if stale else '报告已关联当前研究依据。'}

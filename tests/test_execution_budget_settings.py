@@ -1,5 +1,6 @@
 """Execution settings must be explicit, validated and immutable for a running turn."""
 import copy
+from recommendation_fixture import watch_recommendation
 import json
 from datetime import datetime, timedelta, timezone
 
@@ -248,7 +249,8 @@ def test_owned_stopped_research_can_resume_from_materials_without_reviving_old_w
                     'invalidate_if': '取得新的原文反证', 'status': 'inference'} for title in ('产品场景', '收入缺口')],
         'sections': [{'key': key, 'body': '原始资料与推断分开，盈利和回款仍需进一步核实。',
                       'evidence_ids': ['web-product'], 'status': 'inference'} for key in deep_research.SECTION_TITLES],
-        'questions': ['核对产品收入'], 'limitations': ['收入贡献尚未独立核实']}
+        'questions': ['核对产品收入'], 'limitations': ['收入贡献尚未独立核实'],
+        'investment_recommendation': watch_recommendation()}
     monkeypatch.setattr(deep_research, 'model_json', lambda *args, **kwargs: (copy.deepcopy(draft), {'model': 'fixture'}))
     with store.execution_scope('conversation', chat['id'], continued['turn_id']):
         result = deep_research.refine(run_id, '继续研究产品', continued)

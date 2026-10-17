@@ -222,3 +222,13 @@ def test_proposal_requires_acceptance_and_reuses_result(run):
     again=agent.tool(c,"calculate_proposal",{"proposal_id":proposal["id"]})
     assert again["result"]["id"]==result["result"]["id"]
     assert len(store.get_run(run["id"])["valuation_history"])==1
+
+
+def test_agent_cannot_accept_its_own_new_proposal_in_same_turn(run):
+    c=store.new_conversation(run['id'])
+    c=store.begin_turn(c['id'],'请提出方案，采用后再执行。','test','tushare')
+    proposal=agent.tool(c,'propose_valuation',{'method':'pe','assumptions':{'growth_pct':5,'multiple':12}})['proposal']
+    current=store.get_conversation(c['id'])
+    with pytest.raises(ValueError,match='同一轮自提自采'):
+        agent.tool(current,'calculate_proposal',{'proposal_id':proposal['id']})
+    assert store.get_run(run['id'])['valuation_history']==[]

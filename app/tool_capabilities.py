@@ -8,6 +8,7 @@ TOOLS = {
     'search_company': {'network'},
     'start_research': {'network', 'calculation', 'report', 'materials_write'},
     'fetch_annual_report': {'network', 'materials_write'},
+    'fetch_market_quote': {'network', 'materials_write'},
     'attach_document': {'materials_write'},
     'search_documents': {'pdf_read'},
     'read_document': {'pdf_read'},
@@ -36,6 +37,7 @@ TOOLS = {
 LABELS = {
     'search_company': '匹配公司', 'start_research': '建立财务研究',
     'fetch_annual_report': '接入年报', 'attach_document': '接入已有资料',
+    'fetch_market_quote': '取得市场报价',
     'search_documents': '检索资料', 'read_document': '阅读原文页',
     'valuation_options': '查看估值方法', 'propose_valuation': '整理估值方案',
     'calculate_valuation': '保存估值情景', 'calculate_proposal': '采用估值方案',

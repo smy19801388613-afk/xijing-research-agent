@@ -5,6 +5,7 @@ Callers must apply the current constraints and validate all citations again.
 """
 from copy import deepcopy
 from datetime import datetime
+import re
 
 
 REPORT_TOOLS = {'build_investment_memo', 'refine_investment_memo'}
@@ -122,3 +123,88 @@ def select_working_draft(run, chat):
         'validation_feedback': attempt.get('validation_error') or (step.get('result') or {}).get('error')
                                or (attempt.get('failure') or {}).get('message'),
     })
+
+
+def _review_recovery_request(chat):
+    """Only actual current user text can authorize archival issue recovery."""
+    turn_id = chat.get('turn_id')
+    texts = [m.get('content', '') for m in chat.get('messages', [])
+             if m.get('role') == 'user' and m.get('turn_id') == turn_id]
+    if not texts:
+        texts = [(chat.get('turn_contexts') or {}).get(turn_id, {}).get('user_text', '')]
+    text = '\n'.join(t for t in texts if isinstance(t, str))
+    for clause in re.split(r'[，,。；;\n]', text):
+        if re.search(r'(?:不|不要|不再|不得|无需|禁止)(?:需要|应当|应该)?\s*(?:恢复|复用|保留|继承|沿用|接续|使用|找回)', clause):
+            continue
+        if (re.search(r'(?:恢复|复用|保留|继承|沿用|找回).{0,32}(?:反方审阅|反方意见|审阅意见|复核意见)', clause)
+                or re.search(r'(?:复用|接续|恢复|使用).{0,16}(?:未发布|未保存).{0,16}(?:草稿|初稿)', clause)):
+            return text
+    return ''
+
+
+def select_recoverable_review(run, chat):
+    """Recover genuine archived issues without reviving superseded prose.
+
+    Explicit current authorization may cross task/revision boundaries for
+    review issues only. It requires a same-run/same-chat attempt with an exact
+    failed step link and timestamps; legacy ambiguous ownership is not guessed.
+    The working-draft selector's stricter isolation rules remain unchanged.
+    """
+    request = _review_recovery_request(chat)
+    run_id, chat_id = run.get('id'), chat.get('id')
+    if not request or not run_id or not chat_id or chat.get('run_id') != run_id:
+        return None
+    candidates = []
+    for attempt in run.get('deep_research_attempts', []):
+        review = attempt.get('review')
+        if (not isinstance(review, dict) or not review.get('issues')
+                or not isinstance(attempt.get('id'), str) or not attempt['id']
+                or attempt.get('saved_report_revision') is not None
+                or attempt.get('mode') == 'source_refinement'
+                or attempt.get('run_id') != run_id or attempt.get('chat_id') != chat_id
+                or not attempt.get('turn_id') or not attempt.get('step_id')
+                or not any(isinstance(attempt.get(k), dict) and attempt[k] for k in ('draft', 'repaired_draft'))):
+            continue
+        started = _time(attempt.get('started_at') or attempt.get('id'))
+        if started is None:
+            continue
+        linked = [s for s in chat.get('steps', []) if s.get('id') == attempt['step_id']
+                  and s.get('turn_id') == attempt['turn_id'] and s.get('tool') == 'build_investment_memo'
+                  and s.get('state') in UNSAVED_STATES]
+        if len(linked) != 1:
+            continue
+        step = linked[0]
+        start, end = _time(step.get('started_at')), _time(step.get('finished_at'))
+        context = (chat.get('turn_contexts') or {}).get(attempt['turn_id'], {})
+        if (start is None or end is None or not start <= started <= end
+                or context.get('run_id') not in (None, run_id)
+                or context.get('task_turn_id') not in (None, attempt.get('task_turn_id'))):
+            continue
+        candidates.append((started, attempt))
+    if not candidates:
+        return None
+    # An exact attempt reference is authoritative. Otherwise "existing/latest
+    # review" means the most recent provably owned independent review.
+    named_ids = {a['id'] for a in run.get('deep_research_attempts', [])
+                 if isinstance(a.get('id'), str) and a['id'] and a['id'] in request}
+    if named_ids:
+        candidates = [pair for pair in candidates if pair[1]['id'] in named_ids]
+        if not candidates:
+            return None
+    candidates.sort(key=lambda pair: pair[0], reverse=True)
+    if len(candidates) > 1 and candidates[0][0] == candidates[1][0]:
+        return None
+    attempt = candidates[0][1]
+    from . import review_state
+    recovered = review_state.normalize(attempt['review'])
+    origin = {k: attempt.get(k) for k in ('run_id', 'chat_id', 'turn_id', 'step_id', 'base_report_revision')}
+    origin.update(attempt_id=attempt['id'], attempt_started_at=attempt.get('started_at') or attempt['id'])
+    for issue in recovered['issues']:
+        issue.update(status='needs_review', origin_attempt_id=attempt['id'], origin_turn_id=attempt['turn_id'],
+                     origin_step_id=attempt['step_id'], origin_base_report_revision=attempt.get('base_report_revision'),
+                     origin='unpublished_independent_review')
+        issue.setdefault('first_seen_revision', run.get('report_revision', 1) + 1)
+    recovered.update(independent_review_performed=False, reviewed_revision=None,
+                     recovered_from_unpublished_attempts=[origin],
+                     semantic_status='从未发布草稿恢复实际历史反方意见，均待复核；本轮未重新独立审阅当前报告。')
+    return deepcopy(recovered)

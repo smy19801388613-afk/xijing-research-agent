@@ -44,6 +44,8 @@ def context(run):
     from .valuation_analysis import summary
     from .research_tracking import snapshot as tracking_snapshot
     value = {}
+    if run.get('market_snapshot'):
+        value['market_snapshot'] = deepcopy(run['market_snapshot'])
     if run.get('financial_period_records'):
         periods = snapshot(run)
         analysis = periods['analysis']
@@ -82,6 +84,9 @@ def dependencies(run):
     # when the current report identity changes at save time.
     if run.get('tracking_observations'):
         result['tracking_observations'] = deepcopy(run['tracking_observations'])
+    if run.get('market_snapshot'):
+        result['market_snapshot'] = {k: deepcopy(run['market_snapshot'].get(k)) for k in
+            ('status','ticker','price','currency','trade_date','as_of','source_id','text','provider','gaps','price_age_days','age_days')}
     return result
 
 

@@ -44,7 +44,12 @@ def after_refinement(previous, revision, changed_paths=()):
 def combined(previous,working):
     """An unpublished review adds issues; it cannot erase published history."""
     result=normalize(previous)
-    result['issues']+=normalize(working)['issues']
+    incoming=normalize(working)
+    result['issues']+=incoming['issues']
+    origins = (result.get('recovered_from_unpublished_attempts') or []) + (incoming.get('recovered_from_unpublished_attempts') or [])
+    if origins:
+        result['recovered_from_unpublished_attempts'] = list({item['attempt_id']:deepcopy(item) for item in origins
+                                                             if isinstance(item,dict) and item.get('attempt_id')}.values())
     return normalize(result)
 
 

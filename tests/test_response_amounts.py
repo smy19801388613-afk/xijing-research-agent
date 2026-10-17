@@ -58,3 +58,36 @@ def test_final_response_correction_uses_existing_evidence_without_new_tools(tmp_
         assert '原答复未采用' in saved['messages'][-1]['content']
         assert saved['messages'][-1]['incomplete']
     assert saved['state'] == 'idle' and not saved['steps']
+
+
+@pytest.mark.parametrize('corrects', [True, False])
+def test_period_amount_summary_repairs_or_falls_back_without_repeating_analysis(tmp_path, monkeypatch, corrects):
+    from test_financial_period_answers import results as period_results
+    monkeypatch.setattr(store, 'DATA', tmp_path)
+    run = store.create_run({'ticker': '600887.SH', 'year': 2025, 'as_of': '2026-10-17', 'mode': 'sample'})
+    snapshot = period_results()[0]['result']
+    snapshot['run_id'] = run['id']
+    chat = store.new_conversation(run['id'])
+    chat = store.begin_turn(chat['id'], '分析财务期间并说明2025和2024营业收入，不修改报告，不联网。', 'stub', 'documents')
+    calls, tools = [], []
+    bad = '营业收入：2025年1145.45亿元，2024年1143.02亿元。'
+    good = '营业收入：2025年1156.36亿元，2024年1153.93亿元。'
+    def model(system, payload, *args, **kwargs):
+        calls.append(copy.deepcopy(payload))
+        if len(calls) == 1:
+            return {'action': 'tool', 'tool': 'analyze_financial_periods', 'arguments': {}}, {'model': 'stub'}
+        return {'action': 'respond', 'message': good if corrects and len(calls) > 2 else bad}, {'model': 'stub'}
+    def tool(chat, name, args, *rest):
+        tools.append(name)
+        return copy.deepcopy(snapshot)
+    monkeypatch.setattr(agent, 'model_json', model)
+    monkeypatch.setattr(agent, 'tool', tool)
+    agent.execute(chat['id'])
+    saved = store.get_conversation(chat['id'])
+    message = saved['messages'][-1]['content']
+    assert tools == ['analyze_financial_periods'] and len(calls) == 3
+    assert '1145.45' not in message and '1143.02' not in message
+    assert '1156.36' in message or '115636231250.05' in message
+    if not corrects:
+        assert '原总结未采用' in message and 'fact-ledger-revenue-2025' in message
+    assert saved['state'] == 'idle'

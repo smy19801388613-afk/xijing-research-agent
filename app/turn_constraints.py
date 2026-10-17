@@ -22,6 +22,92 @@ METHOD_ONLY_DISCUSSION = (r'^\s*(?:(?:对于|关于|至于|对)\s*)?' + VALUATIO
 REPORT_COMPLETION_CAUTION = (NEG + r'(?:凭|因为|由于)(?:成功)?(?:生成|保存|更新|修订)' +
     REPORT + r'(?:就|便)(?:称|声称|认为|认定|视为|表示|说明)|' +
     NEG + r'(?:把|将)(?:生成|保存|更新|修订)' + REPORT + r'(?:视为|当作|当成|等同于)')
+PLAN = r'(?:(?:估值|研究|参数|假设|测试)\s*)?(?:方案(?:卡片)?|假设卡片)'
+TURN_STAGE = r'(?:本轮|这轮|这一轮|本次|这次|这一阶段|当前阶段|本阶段)'
+SAVED_VALUATION = r'(?:(?:已|已经)(?:采用|采纳|确认|保存|使用|计算)(?:的)?|(?:已有|现有|当前|原有|之前|原先)(?:的)?)'
+BASE_VALUATION = (r'(?:估值(?:情景|结果|模型)?|(?:PE|PB|PS|DCF|DDM|EV[/／]EBITDA)'
+                  r'(?![A-Za-z0-9_])\s*(?:估值|情景|模型)?)')
+
+
+def valuation_recalculation_limit(text):
+    """Separate a base valuation recomputation ban from all financial math.
+
+    In a coordinated negation such as "不重新联网或重算估值", remove only
+    the recomputation segment; the network ban retains its own scope.
+    """
+    target = (r'(?:(?:重算|重新计算|再次计算|重复计算|重新算|再算|重做)\s*(?:' + SAVED_VALUATION + r')?\s*' + BASE_VALUATION +
+              r'|(?:再)?计算\s*' + SAVED_VALUATION + r'\s*' + BASE_VALUATION + r'|重新估值)')
+    direct = re.compile(NEG + r'\s*(?:再|继续)?\s*' + target, re.I)
+    reverse = re.compile(r'(?:' + SAVED_VALUATION + r')?\s*' + BASE_VALUATION + r'\s*' + NEG + r'\s*(?:再)?(?:重算|重新计算|重复计算|重新算|重做)', re.I)
+    shared = re.compile(NEG + r'[^。；;\n，,、]{0,36}?(?:或|和|以及)(?P<target>' + target + r')', re.I)
+    spans = [match.span() for pattern in (direct, reverse) for match in pattern.finditer(text)]
+    spans += [match.span('target') for match in shared.finditer(text)]
+    if not spans: return False, text
+    mask = list(text)
+    for start, end in spans: mask[start:end] = ' ' * (end - start)
+    return True, ''.join(mask)
+
+
+def _deferred_actions(text, bare_report=False):
+    calculation = bool(re.search(r'计算|重算|实算|执行(?:估值|情景)|运行估值', text))
+    report = bool(re.search(r'(?:生成|保存|更新|修订|改写|重写|完成|撰写|写|出).{0,12}' + REPORT, text))
+    if bare_report and re.match(r'\s*(?:才|再)?\s*(?:做|写|出)?\s*(?:完整|正式|最终)?' + REPORT, text):
+        report = True
+    return {'no_calculation': calculation, 'no_report': report}
+
+
+def _following_actions(text):
+    """Keep a future action list, but stop before a separate present instruction."""
+    parts = re.split(r'[，,]', text.lstrip(' ，,'))
+    selected = parts[:1]
+    for part in parts[1:]:
+        if not re.match(r'\s*(?:并且|并|以及|然后|再|同时|和|及)', part): break
+        selected.append(part)
+    return '，'.join(selected)
+
+
+def staged_limits(text):
+    """A later human decision is a boundary, never present execution consent.
+
+    These narrow patterns concern the user's timing of calculation/report
+    writes. Ordinary fact checking ("确认数据后计算") is not a human approval
+    gate, and preparing a proposal or reading material remains permitted.
+    """
+    limits = {'no_calculation': False, 'no_report': False}
+    def add(value):
+        for key in limits: limits[key] = limits[key] or value[key]
+    for sentence in re.split(r'[。；;\n！？]', text):
+        # Permit an explicit plan object between the authorization verb and
+        # "后"; also retain the old shorthand "待我确认后才可计算".
+        wait = (r'(?:(?:等待|等到|待|等)\s*(?:我|我们|用户)|(?:只有|需要)\s*(?:我|我们|用户))'
+                r'\s*(?:明确|亲自|再次|先)?\s*(?:确认|采用|同意|批准)'
+                r'[^，,。；;\n！？]{0,36}?(?:之后|以后|后)')
+        for match in re.finditer(wait, sentence):
+            if re.search(NEG + r'(?:再|继续)?\s*$', sentence[:match.start()]): continue
+            add(_deferred_actions(_following_actions(sentence[match.end():]), bare_report=True))
+        # A current-turn stop at the pending proposal is explicit even without
+        # spelling out each forbidden side effect a second time.
+        stop = (TURN_STAGE + r'[^，,。；;\n！？]{0,12}(?:结束|停止|停留|停在|止步)'
+                r'[^，,。；;\n！？]{0,10}' + PLAN + r'[^，,。；;\n！？]{0,10}(?:待确认|等待确认|待采用)')
+        if re.search(stop, sentence):
+            add({'no_calculation': True, 'no_report': True})
+        only_plan = (TURN_STAGE + r'\s*(?:先)?\s*(?:仅|只)(?:先)?\s*'
+                     r'(?:(?:准备|提出|整理|讨论|生成|给出|提供|做|出)\s*)?'
+                     r'(?:证据和|证据与|材料和|材料与)?\s*(?:一张|一个|一份)?\s*' + PLAN +
+                     r'(?!里|内|中|的)')
+        if re.search(only_plan, sentence):
+            add({'no_calculation': True, 'no_report': True})
+        # A future turn is distinct from "下一步", which can be part of the
+        # current autonomous workflow. Do not turn that routine order into a ban.
+        future = r'(?:下一轮|下轮|下次|下一次对话|下一次交互|下个回合)'
+        for match in re.finditer(future + r'\s*(?:才|再|才可|才可以|再来|再去)?', sentence):
+            if re.search(NEG + r'\s*$', sentence[:match.start()]): continue
+            add(_deferred_actions(_following_actions(sentence[match.end():]), bare_report=True))
+        for clause in re.split(r'[，,]', sentence):
+            postponed = re.search(r'(?:留到|放到|放在|安排到|推迟到)\s*' + future, clause)
+            if postponed:
+                add(_deferred_actions(clause[:postponed.start()], bare_report=True))
+    return limits
 
 
 def latest_user(chat):
@@ -103,10 +189,17 @@ def constraints(text):
     # A caution against that inference does not forbid the save operation.
     report_clauses = [re.sub(REPORT_COMPLETION_CAUTION, '', c) for c in clauses]
     no_report = read_only or any(re.search(NEG + r'.{0,4}(?:生成|保存|更新|修改|修订|改写|重写|改|写).{0,12}' + REPORT, c) or re.search(REPORT + r'.{0,4}' + NEG + r'.{0,4}(?:改|写|保存|更新|修订)', c) for c in report_clauses)
-    calculation_clauses = [re.sub(KEEP_VALUATION_INPUTS, '', re.sub(NO_PER_SHARE, '', c)) for c in clauses]
+    no_valuation_recalculation, general_calculation_text = valuation_recalculation_limit(text)
+    # “桥接缺失不影响PE每股计算” describes method applicability; it is
+    # not an instruction to stop calculation. Remove only that causal prefix,
+    # so a separate “但不要计算” in the same clause still remains enforceable.
+    calculation_clauses = [re.sub(r'不(?:会|能|应|该|可)?(?:影响|妨碍|阻碍)', '',
+                                 re.sub(KEEP_VALUATION_INPUTS, '', re.sub(NO_PER_SHARE, '', c)))
+                           for c in re.split(r'[。；;\n，,、]', general_calculation_text)]
     no_per_share = any(re.search(NO_PER_SHARE, c) for c in clauses)
-    awaiting_confirmation = bool(re.search(r'(?:等待|待|等)(?:我|用户)(?:明确)?(?:确认|采用)(?:之后|后)(?:才|再)(?:可|能|实际)?(?:进行)?(?:计算|执行)', text))
-    no_calculation = read_only or awaiting_confirmation or any(re.search(NEG + r'.{0,6}(?:计算|重算|估值)', c) for c in calculation_clauses)
+    staged = staged_limits(text)
+    no_report = no_report or staged['no_report']
+    no_calculation = read_only or staged['no_calculation'] or any(re.search(NEG + r'.{0,6}(?:计算|重算|估值)', c) for c in calculation_clauses)
     no_valuation = strict_read_only or (discussion_only and not proposal_requested) or any(re.search(NEG + r'(?:做|进行|保存)?估值', c) for c in clauses)
     no_question_writes = read_only or any(re.search(NEG + r'.{0,5}(?:保存|修改|更新|建立|记录|追加).{0,8}(?:问题|研究记录|跟踪观察|跟踪指标|观察记录)', c) for c in clauses)
     no_material_writes = read_only or any(re.search(NEG + r'.{0,5}(?:接入|挂载|上传|绑定|保存|登记|修改|删除).{0,8}(?:材料|资料|PDF|文件|文档|期间记录|期间底稿|财务期间)', c, re.I) for c in clauses)
@@ -118,7 +211,8 @@ def constraints(text):
     number = {'一':1, '二':2, '两':2, '三':3, '四':4, '五':5, '六':6, '七':7, '八':8, '九':9}
     search_limit = (int(match[1]) if match[1].isdigit() else number.get(match[1], 2)) if match else None
     return dict(no_tools=no_tools, saved_only=saved_only, no_network=no_network, no_deep_research=no_deep_research, no_report=no_report,
-                no_calculation=no_calculation, no_per_share=no_per_share, no_valuation=no_valuation, no_question_writes=no_question_writes,
+                no_calculation=no_calculation, no_valuation_recalculation=no_valuation_recalculation,
+                no_per_share=no_per_share, no_valuation=no_valuation, no_question_writes=no_question_writes,
                 no_material_writes=no_material_writes, no_pdf_read=no_pdf_read, no_web_read=no_web_read,
                 read_restrictions=reading_limits, discussion_only=discussion_only,
                 require_body=require_body, search_limit=search_limit)
@@ -128,6 +222,7 @@ RULE_LABELS = {'no_tools':'不使用工具', 'saved_only':'仅用已有材料', 
     'no_deep_research':'不启动深度研究',
     'no_per_share':'仅计算总值，不计算每股价值',
     'no_report':'不修改报告', 'no_calculation':'不计算', 'no_valuation':'不做估值',
+    'no_valuation_recalculation':'不重算已有估值',
     'no_question_writes':'不修改研究问题', 'no_material_writes':'不修改接入材料',
     'no_pdf_read':'不补读PDF', 'no_web_read':'不补读网页', 'require_body':'需查阅正文'}
 PERSISTENT = r'以后|今后|从现在起|从此|始终|一直|所有后续|后续每轮'
@@ -143,7 +238,8 @@ def explicit_permissions(text):
             if re.search(r'联网|搜索|已有材料',clause): allowed.update(('no_network','saved_only'))
             if re.search(DEEP_RESEARCH,clause): allowed.add('no_deep_research')
             if re.search(REPORT,clause): allowed.add('no_report')
-            if '估值' in clause: allowed.update(('no_calculation','no_valuation'))
+            if '估值' in clause: allowed.update(('no_calculation','no_valuation','no_valuation_recalculation'))
+            if '重算' in clause: allowed.add('no_valuation_recalculation')
             if '计算' in clause: allowed.add('no_calculation')
             if '每股' in clause: allowed.add('no_per_share')
             if re.search(r'问题|研究记录',clause): allowed.add('no_question_writes')
@@ -159,11 +255,22 @@ def explicit_permissions(text):
         if re.search(r'(?:计算|重算|执行|进行).{0,10}(?:估值|情景|桥接|FCFF)|计算', clause, re.I): allowed.add('no_calculation')
         if re.search(r'(?:计算|输出|给出|生成|显示).{0,6}' + PER_SHARE, clause): allowed.add('no_per_share')
         if re.search(r'(?:计算|重算|执行|进行|提出|生成|保存).{0,10}(?:估值|情景|方案)', clause): allowed.add('no_valuation')
+        if (not re.search(r'敏感性|可比', clause)
+                and re.search(r'(?:计算|重算|重新计算|执行|进行)\s*(?:' + SAVED_VALUATION + r')?\s*' + BASE_VALUATION, clause, re.I)):
+            allowed.add('no_valuation_recalculation')
+        adoption = re.search(r'(?:确认采用|同意采用|采用)\s*(?:该|这个|此|当前|刚才|上述|上面|已展示|已保存|上一轮)?(?:的)?\s*' + PLAN, clause)
+        if adoption and not re.search(r'(?:未|没有|尚未|是否|能否|考虑|如果|若|等|待).{0,12}$', clause[:adoption.start()]):
+            allowed.update(('no_calculation', 'no_valuation', 'no_valuation_recalculation'))
         if re.search(r'(?:保存|修改|更新|建立|记录).{0,8}(?:问题|研究记录)', clause): allowed.add('no_question_writes')
         if re.search(r'(?:接入|挂载|上传|绑定).{0,8}(?:PDF|文件|材料|文档|附件)', clause,re.I): allowed.add('no_material_writes')
         if re.search(r'(?:阅读|读取|查阅|补读).{0,8}(?:PDF|文件|文档|年报)',clause,re.I): allowed.add('no_pdf_read')
         if re.search(r'(?:阅读|读取|查阅|补读).{0,8}网页',clause): allowed.add('no_web_read')
-    return allowed
+    # "等我采用方案后再计算" mentions a future action, not a release of a
+    # standing/current restriction. The current stage wins even when a separate
+    # clause cancels an unrelated restriction.
+    staged = staged_limits(text)
+    if staged['no_calculation']: allowed.discard('no_valuation_recalculation')
+    return allowed - {key for key, blocked in staged.items() if blocked}
 
 
 def resolve_turn_policy(chat, text, inherited=None):
@@ -254,6 +361,8 @@ def prohibited_reason(rules, name, arguments=None):
         return '本轮用户明确禁止生成或修改报告，未执行保存。'
     if rules.get('no_calculation') and 'calculation' in caps:
         return '本轮用户明确禁止计算或保存估值，未执行计算。'
+    if rules.get('no_valuation_recalculation') and name in ('calculate_valuation', 'calculate_proposal'):
+        return '本轮用户要求保留已有估值、不重新计算或采用估值方案；仍可按授权分析财务期间或计算敏感性。'
     if rules.get('no_valuation') and 'valuation' in caps:
         return '本轮用户明确禁止估值，未生成估值方案。'
     if rules.get('no_question_writes') and 'questions' in caps:

@@ -74,3 +74,27 @@ def test_proposal_id_and_real_read_locations_remain_distinct():
     assert key('calculate_proposal',{'proposal_id':'a'})==key('calculate_proposal',{'proposal_id':'a','rationale':'change'})
     assert key('calculate_proposal',{'proposal_id':'a'})!=key('calculate_proposal',{'proposal_id':'b'})
     assert key('read_document',{'page':1})!=key('read_document',{'page':2})
+
+
+def test_changing_guessed_period_amounts_and_quotes_does_not_hide_repeated_failure(chat,monkeypatch):
+    calls=[]
+    def model(*args,**kwargs):
+        calls.append(True)
+        return {'action':'tool','tool':'record_financial_periods','arguments':{'records':[
+            {'source_id':'annual-p7','metric':'revenue','year':2025,'period':'FY','period_type':'cumulative',
+             'value':str(100+len(calls)),'quote':'不同的猜测摘录'+str(len(calls))}]}},{'model':'stub'}
+    monkeypatch.setattr(agent,'model_json',model)
+    monkeypatch.setattr(agent,'tool',lambda *a,**k:{'error':'原文摘录未匹配已读取的来源'})
+    agent.execute(chat['id'])
+    saved=store.get_conversation(chat['id'])
+    assert len(calls)==4 and saved['stop_reason']=='no_progress'
+    assert all(s['state']=='failed' for s in saved['steps'])
+
+
+def test_period_import_and_new_source_remain_distinct():
+    key=agent.failed_action_fingerprint
+    assert key('record_financial_periods',{'fact_ids':['a','b']})==key('record_financial_periods',{'fact_ids':['b','a']})
+    assert key('record_financial_periods',{'fact_ids':['a']})!=key('record_financial_periods',{'fact_ids':['b']})
+    a={'records':[{'metric':'revenue','source_id':'page1','year':2025,'period':'FY'}]}
+    b={'records':[{'metric':'revenue','source_id':'page2','year':2025,'period':'FY'}]}
+    assert key('record_financial_periods',a)!=key('record_financial_periods',b)

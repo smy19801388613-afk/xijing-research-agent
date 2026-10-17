@@ -1,4 +1,5 @@
 import copy
+from recommendation_fixture import watch_recommendation
 
 import pytest
 
@@ -242,6 +243,7 @@ def test_build_repair_passes_current_draft_citations_after_new_sources_arrive(tm
                  'frequency': '定期披露后', 'next_check': '下一次定期报告披露后',
                  'support_condition': '余额变动与实际交付一致', 'invalidate_condition': '余额与退货退款出现矛盾',
                  'threshold_basis': 'qualitative', 'next_action': '核对明细', 'status': 'needs_baseline'}]}
+    draft['investment_recommendation'] = watch_recommendation()
     calls = []
 
     def model(system, payload, *args, **kwargs):

@@ -3,6 +3,7 @@ import {ChevronDown,ChevronRight,ExternalLink} from 'lucide-react';
 import ResearchText from './ResearchText';
 import ReportSyncNotice from './ReportSyncNotice';
 import ResearchTracking from './ResearchTracking';
+import InvestmentRecommendation from './InvestmentRecommendation';
 
 function EvidenceLinks({ids,memo}:any){
   const sources=(ids||[]).map((id:string)=>memo.sources?.find((s:any)=>s.id===id)).filter(Boolean);
@@ -30,6 +31,7 @@ export default function MemoView({run,onDeepResearch,onDiscuss,onSync,onHistory}
   return <div className="investment-memo">
     <header className="memo-heading"><div><span className="memo-kicker">{deep?'投资研究备忘录':'财务研究简报'} · 第 {run.report_revision||1} 版</span><h2>{memo.title}</h2></div>{onDeepResearch&&<button className="secondary" onClick={onDeepResearch}>深入研究并更新</button>}</header>
     <ReportSyncNotice run={run} onSync={onSync} onHistory={onHistory}/>
+    <InvestmentRecommendation memo={memo} run={run} onDiscuss={onDiscuss}/>
     {memo.stance&&<div className="memo-stance"><strong>研究立场</strong><p>{memo.stance}</p></div>}
     <ResearchText text={memo.summary}/>
     {valuationState&&['changed','unlinked'].includes(valuationState.state)&&<div className="memo-valuation-status" role="note"><strong>估值与报告的关联</strong><p>{valuationState.message}</p></div>}
